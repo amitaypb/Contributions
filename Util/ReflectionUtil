@@ -1,0 +1,2863 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Collections.ObjectModel;
+using System.Windows;
+using System.Windows.Markup.Primitives;
+using System.Windows.Media;
+using System.Collections;
+
+namespace Framework.Utilities.Util
+{
+	/// <summary>
+    /// Util for Reflection
+    /// </summary>
+    public class ReflectionUtil
+    {
+		#region Methods
+		
+		/// <summary>
+		/// List of properties of the object
+		/// </summary>
+        public static List<string> GetPropertiesNames<T>()
+		{
+		    return typeof (T).GetProperties().Select(propertyInfo => propertyInfo.Name).ToList();
+		}
+
+        /// <summary>
+        /// List of PropertyInfo of the object
+        /// </summary>
+        public static List<PropertyInfo> GetPropertiesInfo<T>(bool orderedByName = true)
+        {
+            return GetPropertiesInfo(typeof(T), orderedByName);
+        }
+
+        /// <summary>
+        /// List of PropertyInfo of the specified Type.
+        /// </summary>
+        /// <param name="type">Type of the Object.</param>
+        /// <param name="orderedByName">Indicates if the List of Properties will be ordered by Name.</param>
+        /// <returns>List of Properties of the specified Type.</returns>
+        public static List<PropertyInfo> GetPropertiesInfo(Type type, bool orderedByName = true)
+        {
+            if (!PropertyIsList(type))
+            {
+                var properties = type.GetProperties();
+
+                if (orderedByName)
+                {
+                    return properties.OrderBy(x => x.Name).ToList();
+                }
+                else
+                {
+                    return properties.ToList();
+                }
+            }
+
+            if (orderedByName)
+            {
+                return GetPropertiesInfo(GetListType(type)).OrderBy(x => x.Name).ToList();
+            }
+            else
+            {
+                return GetPropertiesInfo(GetListType(type));
+            }
+        }
+
+        /// <summary>
+        /// List of PropertyInfo of the object.
+        /// </summary>
+        /// <param name="obj">Object to get the Properties.</param>
+        /// <returns>List of Properties of the Object.</returns>
+        public static List<PropertyInfo> GetPropertiesInfo(object obj, bool orderedByName = true)
+        {
+            if(obj == null)
+            {
+                return null;
+            }
+
+            return GetPropertiesInfo(obj.GetType(), orderedByName);
+        }
+
+        /// <summary>
+        /// Gets the List of Properties of an Object that are Included in the Mapping.
+        /// Properties that both the C# class and the Database Table of the Business Object have.
+        /// </summary>
+        /// <param name="type">Type of the Business Object.</param>
+        /// <returns>List of Properties of an Object that are Included in the Mapping.</returns>
+        public static List<PropertyInfo> GetIncludedMappingProperties(Type type)
+        {
+            var properties = GetPropertiesInfo(type);
+
+            var includedProperties = properties.Where(x => !HaveAttribute(x, typeof(ExcludeMappingAttribute)) 
+                                                   && x.Name != BaseConstants.IsNotifying).ToList();
+
+            return includedProperties;
+        }
+
+        /// <summary>
+        /// Gets a property by it's property name.
+        /// </summary>
+        /// <param name="propertyName">Name of the property</param>
+        /// <returns>Property with the specified name</returns>
+        public static PropertyInfo GetPropertyByName(object obj, string propertyName)
+        {
+            var properties = GetProperties(obj);
+
+            if(properties == null)
+            {
+                return null;
+            }
+
+            return properties.FirstOrDefault(x => x.Name == propertyName);
+        }
+
+        public static PropertyInfo[] GetProperties(object obj)
+        {
+            if(obj == null)
+            {
+                return null;
+            }
+
+            return obj.GetType().GetProperties();
+        }
+
+        /// <summary>
+        /// Gets a property by it's property Type.
+        /// </summary>
+        /// <param name="type">Type of the property</param>
+        /// <returns>Property with the specified Type</returns>
+        public static PropertyInfo GetPropertyByType(object obj, Type type)
+        {
+            var properties = GetProperties(obj);
+
+            if (properties == null)
+            {
+                return null;
+            }
+
+            return properties.FirstOrDefault(x => x.PropertyType == type);
+        }
+
+        /// <summary>
+        /// Sets a property of an Object by it's property name.
+        /// </summary>
+        /// <param name="obj">Object to set a property value.</param>
+        /// <param name="propertyName">Name of the property</param>
+        /// <param name="parameterValue">Value of the property</param>
+        /// <returns>The object with the property setted</returns>
+        public static T SetPropertyValue<T>(T obj, string propertyName, object parameterValue)
+	    {
+            if(obj == null)
+            {
+                return default(T);
+            }
+
+	        var property = GetPropertyByName(obj, propertyName);
+
+	        if (property == null)
+	        {
+	            return default(T);
+	        }
+
+	        property.SetValue(obj, parameterValue);
+	        return obj;
+		}
+
+        /// <summary>
+        /// Given an object, gets a value of a property
+        /// </summary>
+        /// <param name="obj">Object</param>
+        /// <param name="name">Property name</param>
+        /// <returns>Property value of the property with name = name of object obj</returns>
+        public static object GetPropertyValue(object obj, string name)
+        {
+            if (obj == null)
+            {
+                return null;
+            }
+
+            var type = obj.GetType();
+
+            foreach (var part in name.Split('.'))
+            {                
+                var info = type.GetProperty(part);
+
+                if (info != null)
+                {
+                    var propertyValue = info.GetValue(obj, null);
+                    return propertyValue;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Creates an instance of className and cast to T
+        /// </summary>
+        /// <typeparam name="T">Type to cast</typeparam>
+        /// <param name="assemblyName">Assembly name</param>
+        /// <param name="className">Class name</param>
+        /// <returns>The instance</returns>
+        public static T CreateInstance<T>(string assemblyName, string className) where T : class
+        {
+            return CreateInstance<T>(assemblyName, className, null);
+        }
+
+        /// <summary>
+        /// Creates an instance of className and cast to T
+        /// </summary>
+        /// <typeparam name="T">Type to cast</typeparam>
+        /// <param name="assemblyName">Assembly name</param>
+        /// <param name="className">Class name</param>
+        /// <param name="args">Constructor arguments</param>
+        /// <returns>The instance</returns>
+        public static T CreateInstance<T>(string assemblyName, string className, params object[] args) where T : class
+        {
+            var assemblyFilePath = FileUtil.GetAssemblyFilePath(assemblyName);
+
+            if (!FileUtil.ExistsAssembly(assemblyName))
+            {
+                throw new FileNotFoundException(string.Format("No se encuentra el Assembly en {0}",
+                    assemblyFilePath));
+            }
+
+            // Especificando el namespace de la clase
+            var assembly = Assembly.LoadFile(assemblyFilePath);
+            var instanceType = assembly.GetType(className);
+
+            if (instanceType != null)
+            {
+                var instance = Activator.CreateInstance(instanceType, args) as T;
+
+                return instance;
+            }
+
+            var typeFind = assembly.GetTypes().FirstOrDefault(x => x.Name.Equals(className));
+
+            if (typeFind != null)
+            {
+                return Activator.CreateInstance(typeFind, args) as T;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Copy the values of the properties of the object source to the object destiny.
+        /// It excludes the properties specified in the excludeProperties list
+        /// </summary>
+        /// <typeparam name="T">Type of the Object.</typeparam>
+        /// <param name="source">Source object</param>
+        /// <param name="destiny">Destination object</param>
+        /// <param name="excludeProperties">Properties to exclude</param>
+        /// <param name="excludeNotMappedProperties">Indicates if the excluded Properties in Mappings will be excluded.</param>
+	    public static void CopyTo<T>(T source, T destiny, List<string> excludedProperties = null, bool excludeNotMappedProperties = true)
+	    {
+			if(source == null)
+			{
+				destiny = default(T);
+				return;
+			}
+
+	        var objectProperties = GetPropertiesInfo<T>();
+            var excludeAttribute = false;
+
+            foreach (var property in objectProperties)
+	        {
+	            if ((excludedProperties != null && excludedProperties.Contains(property.Name))
+                    || property.SetMethod == null)
+	            {
+	                continue;
+	            }
+
+                if(excludeNotMappedProperties)
+                {
+                    object[] attrs = property.GetCustomAttributes(true);
+                    excludeAttribute = false;
+
+                    foreach (var attribute in attrs)
+                    {
+                        var excludedMappingAttribute = attribute as ExcludeMappingAttribute;
+
+                        if (excludedMappingAttribute != null)
+                        {
+                            excludeAttribute = true;
+                            break;
+                        }
+                    }
+
+                    if(excludeAttribute)
+                    {
+                        continue;
+                    }
+                }
+
+	            var propertyValue = property.GetValue(source);
+
+				property.SetValue(destiny, propertyValue);
+	        }
+	    }
+
+        /// <summary>
+        /// Copy the values of the properties of the Source object to the Destination object.
+        /// It excludes the properties specified in the excludeProperties list.
+        /// Like an AutoMapper functionality.
+        /// </summary>
+        /// <typeparam name="T">Type of the Source Object.</typeparam>
+        /// <typeparam name="D">Type of the Destination Object.</typeparam>
+        /// <param name="source">Source object</param>
+        /// <param name="destiny">Destination object</param>
+        /// <param name="excludeProperties">Properties to exclude</param>
+        /// <param name="excludeNotMappedProperties">Indicates if the excluded Properties in Mappings will be excluded.</param>
+        /// <returns>Object with the D Type with the values of properties of the Source Object.
+        /// Like an AutoMapper functionality.</returns>
+	    public static D CopyToOtherObject<T, D>(T source, List<string> excludeProperties = null, bool excludeNotMappedProperties = true)
+            where D : new()
+        {  
+            if (source == null)
+            {
+                return default(D);
+            }
+
+            var destinationObject = new D();
+            var sourceObjectProperties = GetPropertiesInfo<T>();
+            var destinationObjectProperties = GetPropertiesInfo<D>();
+            var excludeAttribute = false;
+
+            foreach (var sourceObjectProperty in sourceObjectProperties)
+            {
+                if ((excludeProperties != null && excludeProperties.Contains(sourceObjectProperty.Name))
+                    || sourceObjectProperty.SetMethod == null)
+                {
+                    continue;
+                }
+
+                if (excludeNotMappedProperties)
+                {
+                    object[] attrs = sourceObjectProperty.GetCustomAttributes(true);
+                    excludeAttribute = false;
+
+                    foreach (var attribute in attrs)
+                    {
+                        var excludedMappingAttribute = attribute as ExcludeMappingAttribute;
+
+                        if (excludedMappingAttribute != null)
+                        {
+                            excludeAttribute = true;
+                            break;
+                        }
+                    }
+
+                    if (excludeAttribute)
+                    {
+                        continue;
+                    }
+                }
+
+                var destinationProperty = destinationObjectProperties.FirstOrDefault(x => x.Name == sourceObjectProperty.Name);
+
+                if (destinationProperty != null)
+                {
+                    var propertyValue = sourceObjectProperty.GetValue(source);
+
+                    //If Properties have the same Names and Types, copy its value.
+                    if (destinationProperty.PropertyType == sourceObjectProperty.PropertyType)
+                    {
+                        destinationProperty.SetValue(destinationObject, propertyValue);
+                    }
+                    //If the Properties have the same Name but a different Type, invoke this Method recursively for the
+                    //Properties. For instance, if you want to copy a SystemText to a SystemTextDTO. SystemText have a Language,
+                    //and SystemTextDTO have a LanguageDTO, and you want to copy the Language Properties Values to LanguageDTO properties.
+                    else
+                    {
+                        MethodInfo method = typeof(ReflectionUtil).GetMethod("CopyToOtherObject");
+                        MethodInfo genericMethod = method.MakeGenericMethod(sourceObjectProperty.PropertyType, destinationProperty.PropertyType);
+                        var destinationPropertyValue = genericMethod.Invoke(null, new object[] { propertyValue, excludeProperties, excludeNotMappedProperties });
+
+                        destinationProperty.SetValue(destinationObject, destinationPropertyValue);
+                    }
+                }
+            }
+
+            return destinationObject;
+        }
+
+        /// <summary>
+        /// Gets the List of Types in the specified assembly
+        /// </summary>
+        /// <param name="assemblyPath">Path for the assembly.</param>
+        /// <param name="exceptions">List of exception ocurred.
+        /// Exceptions can happen, when loading types declared in assemblies used 
+        /// or referenced in the specified assembly.</param>
+        /// <returns>List of Types in the specified assembly</returns>
+        public static List<Type> GetTypesFromAssembly(string assemblyPath, out List<ExceptionDTO> exceptions)
+        {
+            if (!File.Exists(assemblyPath))
+            {
+                throw new FileNotFoundException("The file " + assemblyPath + " does not exists.");
+            }
+
+            exceptions = new List<ExceptionDTO>();
+            List<Type> objectTypesList;
+
+            try
+            {
+                var assembly = Assembly.LoadFrom(assemblyPath);
+
+                var objectTypes = assembly.GetTypes();
+
+                objectTypesList = objectTypes.ToList();
+            }
+            catch (ReflectionTypeLoadException e)
+            {
+                exceptions.AddRange(e.LoaderExceptions.Select(loaderException => new ExceptionDTO
+                {
+                    ExceptionType = loaderException.GetType(), 
+                    ExceptionMessage = loaderException.Message
+                }));
+
+                objectTypesList = e.Types.Where(x => x != null).ToList();
+            }
+
+            return objectTypesList;
+        }
+
+        public static Type ClassNameExistsInAssembly(string assemblyPath, string className)
+        {
+            var assemblyFilePath = assemblyPath;
+
+            if(!File.Exists(assemblyFilePath))
+            {
+                //Try searching the assemblyPath in the Environment.CurrentDirectory.
+                assemblyFilePath = Path.Combine(Environment.CurrentDirectory, assemblyFilePath);
+
+                if(!File.Exists(assemblyFilePath))
+                {
+                    throw new FileNotFoundException("The file " + assemblyPath + " does not exists.");
+                }
+            }
+
+            var assembly = Assembly.LoadFrom(assemblyPath);
+
+            var existingType = assembly.GetTypes().FirstOrDefault(x => x.Name == className);
+
+            return existingType;
+        }
+
+        public static MethodInfo MethodNameExistsInClass(string assemblyPath, string className, string methodName)
+        {
+            var classType = ClassNameExistsInAssembly(assemblyPath, className);
+
+            if(classType == null)
+            {
+                return null;
+            }
+
+            var methods = classType.GetMethods(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance);
+
+            var existingMethod = methods.FirstOrDefault(x => x.Name == methodName);
+
+            return existingMethod;
+        }
+
+        /// <summary>
+        /// Gets the List of Enums in the specified assembly
+        /// </summary>
+        /// <param name="assemblyPath">Path for the assembly.</param>
+        /// <param name="exceptions">List of exception ocurred.
+        /// Exceptions can happen, when loading types declared in assemblies used 
+        /// or referenced in the specified assembly.</param>
+        /// <returns>List of Enums in the specified assembly</returns>
+        public static List<Type> GetEnumsFromAssembly(string assemblyPath, out List<ExceptionDTO> exceptions)
+	    {
+	        var typesDTOs = GetTypesFromAssembly(assemblyPath, out exceptions);
+
+	        return typesDTOs.Where(x => x.IsEnum).ToList();
+	    }
+
+        /// <summary>
+        /// Gets the List of Classes in the specified assembly
+        /// </summary>
+        /// <param name="assemblyPath">Path for the assembly.</param>
+        /// <param name="exceptions">List of exception ocurred.
+        /// Exceptions can happen, when loading types declared in assemblies used 
+        /// or referenced in the specified assembly.</param>
+        /// <returns>List of Classes in the specified assembly</returns>
+        public static List<Type> GetClassesFromAssembly(string assemblyPath, out List<ExceptionDTO> exceptions)
+        {
+            var typesDTOs = GetTypesFromAssembly(assemblyPath, out exceptions);
+
+            return typesDTOs.Where(x => x.IsClass).ToList();
+        }
+
+        /// <summary>
+        /// Gets the List of Types that have a BaseType equals to the specified typeName in the
+        /// specified assemblyPath.
+        /// </summary>
+        /// <param name="assemblyPath">Path for the assembly to search the types(dll file)</param>
+        /// <param name="baseTypeName">Base Type Name.</param>
+        /// <returns>List of Types that have a BaseType equals to the specified typeName in the
+        /// specified assemblyPath.</returns>
+        public static List<Type> GetTypesWithBaseTypeInFile(string assemblyPath, string baseTypeName)
+        {
+            List<Type> objectTypes;
+
+            try
+            {
+                List<ExceptionDTO> exceptions;
+                objectTypes = GetTypesFromAssembly(assemblyPath, out exceptions);
+            }
+            catch (Exception)
+            {
+                //The type could not be loaded. Return.
+                return new List<Type>();
+            }
+
+            var typesThatImplements = objectTypes.Where(p => TypeHaveBaseType(p, baseTypeName)).ToList();
+
+            return typesThatImplements;
+        }
+
+        /// <summary>
+        /// Gets the types in a directory that have a BaseType equals to the specified typeName.
+        /// It excludes the specified files with extensions and the files starting with.
+        /// </summary>
+        /// <param name="directoryPath">Directory Path.</param>
+        /// <param name="baseTypeName">Base Type Name.</param>
+        /// <param name="excludeFilesWithExtension">List of extensions to be excluded in the search.</param>
+        /// <param name="excludeFileNamesStartingWith">List of file names starting with to be excluded in the search.</param>
+        /// <returns>List of types in a directory that have a BaseType equals to the specified typeName.
+        /// It excludes the specified files with extensions and the files starting with.</returns>
+        public static List<Type> GetTypesWithBaseTypeInDirectory(string directoryPath, string baseTypeName, List<string> excludeFilesWithExtension = null,
+            List<string> excludeFileNamesStartingWith = null)
+        {
+            if (!Directory.Exists(directoryPath))
+            {
+                return new List<Type>();
+            }
+
+            var files = FileUtil.GetDirectoryFiles(directoryPath, true, true, excludeFilesWithExtension);
+
+            var filesToAnalyze = new List<string>();
+
+            foreach (var filePath in files)
+            {
+                var fileName = Path.GetFileName(filePath);
+
+                var excludeFile = excludeFileNamesStartingWith != null && !string.IsNullOrWhiteSpace(fileName)
+                    && excludeFileNamesStartingWith.Any(x => fileName.StartsWith(x));
+
+                if (!excludeFile)
+                {
+                    filesToAnalyze.Add(filePath);
+                }
+            }
+
+            var typesWithBaseType = new List<Type>();
+
+            foreach (var filePath in filesToAnalyze)
+            {
+                var typesWithBaseTypeInFile = GetTypesWithBaseTypeInFile(filePath, baseTypeName);
+                typesWithBaseType.AddRange(typesWithBaseTypeInFile);
+            }
+
+            return typesWithBaseType;
+        }
+
+		/// <summary>
+		/// Gets if the specified Type have a BaseType in its ancestors with the specified baseTypeName.
+		/// </summary>
+		/// <param name="type">Type</param>
+		/// <param name="baseType">Base Type.</param>
+		/// <returns>True: The specified Type have a BaseType in its ancestors with the specified baseTypeName.
+		/// False: Otherwise.</returns>
+		public static bool TypeHaveBaseType(Type type, Type baseType)
+		{
+			return TypeHaveBaseType(type, baseType.Name);
+		}
+
+		/// <summary>
+		/// Gets if the specified Type have a BaseType in its ancestors with the specified baseTypeName.
+		/// </summary>
+		/// <param name="type">Type</param>
+		/// <param name="baseTypeName">Base Type Name.</param>
+		/// <returns>True: The specified Type have a BaseType in its ancestors with the specified baseTypeName.
+		/// False: Otherwise.</returns>
+		public static bool TypeHaveBaseType(Type type, string baseTypeName)
+        {
+            var baseType = type;
+            var indexOf = -1;
+            var typeName = string.Empty;
+
+            do
+            {
+                typeName = baseType.Name;
+
+				if (baseType != null && typeName == baseTypeName)
+				{
+					return true;
+				}
+
+				indexOf = typeName.IndexOf('`');
+                if(indexOf > 0)
+                {
+                    typeName = typeName.Substring(0, indexOf);
+                }
+
+                if (baseType != null && typeName == baseTypeName)
+                {
+                    return true;
+                }
+
+                if (baseType != null)
+                {
+                    baseType = baseType.BaseType;
+                }
+            }
+            while (baseType != null && baseType.BaseType != null && baseType.BaseType.Name != "Object");
+
+            if (baseType != null)
+            {
+                typeName = baseType.Name;
+
+                indexOf = typeName.IndexOf('`');
+
+                if (indexOf > 0)
+                {
+                    typeName = typeName.Substring(0, indexOf);
+                }
+            }
+
+            return baseType != null && typeName == baseTypeName;
+        }
+
+        /// <summary>
+        /// Checks if the specified Type have a Property that is a List of Business Objects.
+        /// </summary>
+        /// <param name="type">Type.</param>
+        /// <returns>TRUE: The specified Type have a Property that is a List of Business Objects.</returns>
+        public static bool TypeHaveBusinessObjectsListProperty(Type type)
+        {
+            var properties = GetPropertiesInfo(type);
+
+            foreach(var property in properties)
+            {
+                if(PropertyIsList(property))
+                {
+                    var listType = property.PropertyType.GenericTypeArguments[0];
+
+                    if(TypeHaveBaseType(listType, BaseConstants.BaseBusinessObject))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+	    public static string GetTypeName<T>()
+	    {
+	        var type = typeof (T);
+	        return type.Name;
+	    }
+
+        /// <summary>
+        /// Makes a Clon of the Object.
+        /// </summary>
+        /// <param name="objectToBeCloned">Object to be Cloned.</param>
+        /// <param name="excludedProperties">List of Properties to be excluded in the Clonation.</param>
+        /// <returns>Clone of the Object.</returns>
+		public static dynamic CloneObjectWithType(object objectToBeCloned, List<string> excludedProperties = null)
+        {
+            MethodInfo method = typeof(ReflectionUtil).GetMethod("CloneObject");
+            MethodInfo genericMethod = method.MakeGenericMethod(objectToBeCloned.GetType());
+            var objectWithType = genericMethod.Invoke(null, new object[] { objectToBeCloned, excludedProperties });
+
+            return objectWithType;
+        }
+
+        /// <summary>
+        /// List of Properties of Windows to be excluded when copying a Window to another.
+        /// </summary>
+        /// <returns>List of Properties of Windows to be excluded when copying a Window to another.</returns>
+        public static List<string> GetWindowsExcludedPropertiesOnCopy()
+        {
+            return new List<string>
+            {
+                "DialogResult"
+            };
+        }
+
+        /// <summary>
+        /// Makes a Clon of the specified Object.
+        /// </summary>
+        /// <param name="objectToBeCloned">Object to be Cloned.</param>
+        /// <param name="excludedProperties">List of Properties to be excluded in the Clonation.</param>
+        /// <returns>Clone of the Object.</returns>
+        public static T CloneObject<T>(T objectToBeCloned, List<string> excludedProperties = null) where T : new()
+        {
+            if(objectToBeCloned == null)
+            {
+                return default(T);
+            }
+
+            T clon = default(T);
+
+            if (typeof(T) == typeof(object) && TypeHaveBaseType(objectToBeCloned.GetType(), BaseConstants.BaseBusinessObject))
+            {
+                clon = CreateInstance<dynamic>(BaseConstants.BusinessObjectsAssemblyName, objectToBeCloned.GetType().FullName); 
+            }
+            else
+            {
+                //clon = new T();
+                clon = (T)Activator.CreateInstance(objectToBeCloned.GetType());
+            }
+
+            if(objectToBeCloned is Window)
+            {
+                if(excludedProperties == null)
+                {
+                    excludedProperties = new List<string>();
+                }
+
+                excludedProperties.AddRange(GetWindowsExcludedPropertiesOnCopy());
+            }
+
+            //If we want to clone a List of elements, we copy each of the Elements to the Clone List.
+            if(objectToBeCloned is IEnumerable)
+            {
+                var list = objectToBeCloned as IEnumerable;
+                foreach(var obj in list)
+                {
+                    AddObjectToList(clon, obj);
+                }
+
+                return clon;
+            }
+
+            //Get the Properties of the Object with a Set Method.
+            //Ignore Read Only Properties.
+            var objectProperties = GetProperties(objectToBeCloned);
+
+            foreach (var property in objectProperties)
+            {
+				if ((excludedProperties != null && excludedProperties.Contains(property.Name))
+					|| property.SetMethod == null)
+				{
+					continue;
+				}
+
+				//Get the Property Value.
+				var propertyValue = property.GetValue(objectToBeCloned);
+
+                //Assign the Value of the Property to the Clon Object.
+                property.SetValue(clon, propertyValue);
+            }
+
+            return clon;
+        }
+
+        /// <summary>
+        /// Checks if the Business Objects have all of its Properties with the same value.
+        /// </summary>
+        /// <param name="obj1">First Object to be compared.</param>
+        /// <param name="obj2">Second Object to be compared.</param>
+        /// <param name="getAllDifferences">Indicates if all of the Differences will be obtained.
+        /// If false, Stop Comparison when the First Difference is found.</param>
+        /// <param name="excludeNotMappedProperties">Indicates if the Properties that are Excluded in the Mapping will be excluded in the comparison.</param>
+        /// <param name="excludedProperties">List of Properties to be excluded in the Comparison.</param>
+        /// <param name="excludedListProperties">List of Properties to be excluded in the Comparison of List Objects.</param>
+        /// <returns>Base Response.</returns>
+        public static BaseResponse ObjectsHaveAllPropertiesEqual(object obj1, object obj2, long languageId,
+            bool getAllDifferences = true, bool excludeNotMappedProperties = true,
+            List<string> excludedProperties = null, List<string> excludedListProperties = null)
+        {
+            var response = new BaseResponse();
+            var methodName = "ObjectsHaveAllPropertiesEqual";
+
+            if((obj1 == null && obj2 != null) || (obj1 != null && obj2 == null))
+            {
+                response.Message = MultiLanguageXmlReader.GetString<ReflectionUtil>("OneObjectIsNull", languageId);
+
+                response.ResponseType = ResponseTypeEnum.Error;
+                return response;
+            }
+
+            if (obj1.GetType() != obj2.GetType())
+            {
+                response.Message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ObjectsWithDifferentType", languageId);
+                response.Message = string.Format(response.Message, obj1.GetType().FullName, obj2.GetType().FullName, methodName);
+
+                response.ResponseType = ResponseTypeEnum.Error;
+                return response;
+            }
+
+            //Iterate all of the Properties and compare its values.
+            var properties = GetPropertiesInfo(obj1);
+
+            foreach (var property in properties)
+            {
+                //If the Property is not included in the Mapping, do not check it.
+                if (excludeNotMappedProperties && HaveAttribute(property, typeof(ExcludeMappingAttribute))
+                || (excludedProperties != null && excludedProperties.Contains(property.Name)))
+                {
+                    continue;
+                }
+
+                //If the Property is a Business Object, compare the Ids.
+                if (TypeHaveBaseType(property.PropertyType, BaseConstants.BaseBusinessObject))
+                {
+                    var innerProperties = GetPropertiesInfo(property.PropertyType);
+
+                    var idProperty = innerProperties.FirstOrDefault(x => x.Name == BaseConstants.Id);
+
+                    if (idProperty == null)
+                    {
+                        if (!string.IsNullOrEmpty(response.Message))
+                        {
+                            response.Message += Environment.NewLine;
+                        }
+
+                        response.Message += MultiLanguageXmlReader.GetString<ReflectionUtil>("TypeDoesNotHaveProperty", languageId);
+                        response.Message = string.Format(response.Message, property.PropertyType.FullName, BaseConstants.Id, methodName);
+                        response.ResponseType = ResponseTypeEnum.Error;
+
+                        if (!getAllDifferences)
+                        {
+                            return response;
+                        }
+                    }
+
+                    var innerBusinessObject = property.GetValue(obj1);
+                    var otherInnerBusinessObject = property.GetValue(obj2);
+
+                    long idObject = 0;
+                    long otherIdObject = 0;
+
+                    if (innerBusinessObject != null)
+                    {
+                        idObject = (long)idProperty.GetValue(innerBusinessObject);
+                    }
+
+                    if (otherInnerBusinessObject != null)
+                    {
+                        otherIdObject = (long)idProperty.GetValue(otherInnerBusinessObject);
+                    }
+
+                    if (idObject != otherIdObject && (idObject > 0 || otherIdObject > 0))
+                    {
+                        if (!string.IsNullOrEmpty(response.Message))
+                        {
+                            response.Message += Environment.NewLine;
+                        }
+
+                        response.Message += MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyHaveDifferentValue", languageId);
+                        response.Message = string.Format(response.Message, property.Name, methodName, idObject, otherIdObject);
+
+                        response.ResponseType = ResponseTypeEnum.Error;
+
+                        if (!getAllDifferences)
+                        {
+                            return response;
+                        }
+                    }
+                }
+                //If the Property is a List, check each Element of the List.
+                else if (PropertyIsList(property))
+                {
+                    var listType = GetListType(property);
+
+                    var listObject = property.GetValue(obj1);
+                    var otherListObject = property.GetValue(obj2);
+
+                    var listObjectCount = listObject == null ? 0 : ((IList)listObject).Count;
+                    var otherListObjectCount = otherListObject == null ? 0 : ((IList)otherListObject).Count;
+
+                    bool haveEqualCount = true;
+
+                    if (listObjectCount != otherListObjectCount)
+                    {
+                        haveEqualCount = false;
+
+                        if (!string.IsNullOrEmpty(response.Message))
+                        {
+                            response.Message += Environment.NewLine;
+                        }
+
+                        response.Message += MultiLanguageXmlReader.GetString<ReflectionUtil>("ListHaveDifferentCount", languageId);
+                        response.Message = string.Format(response.Message, property.Name, listObjectCount, otherListObjectCount);
+
+                        response.ResponseType = ResponseTypeEnum.Error;
+                        if (!getAllDifferences)
+                        {
+                            return response;
+                        }
+                    }
+
+                    if (TypeHaveBaseType(listType, BaseConstants.BaseBusinessObject))
+                    {
+                        if (haveEqualCount)
+                        {
+                            //Cast object to List of Objects.
+                            for (var i = 0; i < listObjectCount; i++)
+                            {
+                                var item = ((IList)listObject)[i];
+
+                                var otherItem = ((IList)otherListObject)[i];
+
+                                var innerBusinessObjectsAreEqual = ObjectsHaveAllPropertiesEqual(item, otherItem, languageId, getAllDifferences, 
+                                    excludeNotMappedProperties, excludedListProperties, excludedListProperties);
+
+                                if (!string.IsNullOrEmpty(response.Message))
+                                {
+                                    response.Message += Environment.NewLine;
+                                }
+
+                                if (!innerBusinessObjectsAreEqual.Success)
+                                {
+                                    response.Message += innerBusinessObjectsAreEqual.Message + " Index: " + i;
+                                }
+
+                                if (!innerBusinessObjectsAreEqual.Success && !getAllDifferences)
+                                {
+                                    return response;
+                                }
+                            }
+                        }
+                    }
+                    else if (haveEqualCount)//The List is not a List of Business Objects.
+                    {
+                        for (var i = 0; i < listObjectCount; i++)
+                        {
+                            var item = ((IList)listObject)[i];
+
+                            var otherItem = ((IList)otherListObject)[i];
+                            var innerObjectsAreEqual = ObjectsAreEqual(item, otherItem);
+
+                            if (!innerObjectsAreEqual)
+                            {
+                                if (!string.IsNullOrEmpty(response.Message))
+                                {
+                                    response.Message += Environment.NewLine;
+                                }
+
+                                var itemString = item == null ? BaseConstants.NULL : item.ToString();
+                                var otherItemString = otherItem == null ? BaseConstants.NULL : otherItem.ToString();
+
+                                response.Message += MultiLanguageXmlReader.GetString<ReflectionUtil>("ListsAreDifferent", languageId);
+                                response.Message = string.Format(response.Message, property.Name, i, itemString, otherItemString);
+
+                                response.ResponseType = ResponseTypeEnum.Error;
+                                if (!getAllDifferences)
+                                {
+                                    return response;
+                                }
+                            }
+                        }
+                    }
+                }
+                else//The Property is not a List, and also it is not a Business Object. Compare them using the Equals Method.
+                {
+                    var propertyValue = property.GetValue(obj1);
+                    var otherPropertyValue = property.GetValue(obj2);
+
+                    if ((propertyValue == null && otherPropertyValue != null) || (propertyValue != null && otherPropertyValue == null)
+                     || (propertyValue != null && otherPropertyValue != null && !propertyValue.Equals(otherPropertyValue)))
+                    {
+                        if (!string.IsNullOrEmpty(response.Message))
+                        {
+                            response.Message += Environment.NewLine;
+                        }
+
+                        response.Message += MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertiesAreDifferent", languageId);
+
+                        var propertyValueString = propertyValue == null ? "NULL" : propertyValue;
+                        var otherPropertyValueString = otherPropertyValue == null ? "NULL" : otherPropertyValue;
+
+                        response.Message = string.Format(response.Message, property.Name, propertyValueString, otherPropertyValueString);
+
+                        response.ResponseType = ResponseTypeEnum.Error;
+                        if (!getAllDifferences)
+                        {
+                            return response;
+                        }
+                    }
+                }
+            }
+
+            response.ResponseType = string.IsNullOrEmpty(response.Message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+        }
+
+        public static bool ObjectsAreEqual(object obj1, object obj2)
+        {
+            var response = new BaseResponse
+            {
+                ResponseType = ResponseTypeEnum.Success
+            };
+
+            var firstType = obj1.GetType();
+            var secondType = obj2.GetType();
+
+            var objectsAreEqual = false;
+
+            //The Integer class have Multiple Matches for the Equals Method.
+            //It is better to cast it as integers and compare them.
+            if (firstType == typeof(int))
+            {
+                objectsAreEqual = (int)obj1 == (int)obj2;
+            }
+            else if (firstType == typeof(int?))
+            {
+                objectsAreEqual = (int?)obj1 == (int?)obj2;
+            }
+            else if (firstType == typeof(long))
+            {
+                objectsAreEqual = (long)obj1 == (long)obj2;
+            }
+            else if (firstType == typeof(long?))
+            {
+                objectsAreEqual = (long?)obj1 == (long?)obj2;
+            }
+            else if (firstType == typeof(double))
+            {
+                objectsAreEqual = (double)obj1 == (double)obj2;
+            }
+            else if (firstType == typeof(double?))
+            {
+                objectsAreEqual = (double?)obj1 == (double?)obj2;
+            }
+            else if (firstType == typeof(float))
+            {
+                objectsAreEqual = (float)obj1 == (float)obj2;
+            }
+            else if (firstType == typeof(float?))
+            {
+                objectsAreEqual = (float?)obj1 == (float?)obj2;
+            }
+            else if (firstType == typeof(string))
+            {
+                objectsAreEqual = (string)obj1 == (string)obj2;
+            }
+            else if (firstType == typeof(bool))
+            {
+                objectsAreEqual = (bool)obj1 == (bool)obj2;
+            }
+            else if (firstType == typeof(bool?))
+            {
+                objectsAreEqual = (bool?)obj1 == (bool?)obj2;
+            }
+            else
+            {
+                var equalsMethodInfo = firstType.GetMethod("Equals");
+
+                objectsAreEqual = (bool)equalsMethodInfo.Invoke(obj1, new object[] { obj2 });
+            }
+
+            return objectsAreEqual;
+        }
+
+        /// <summary>
+        /// Gets the Version of the specified File.
+        /// </summary>
+        /// <param name="filePath">File Path.</param>
+        /// <returns>Version of the specified File.</returns>
+        public static string FileVersion(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                return string.Empty;
+            }
+
+            var versInfo = FileVersionInfo.GetVersionInfo(filePath);
+            var fileVersion = versInfo.FileVersion;
+
+            return fileVersion;
+        }
+
+        /// <summary>
+        /// Gets the Type of the List stored in the property parameter.
+        /// </summary>
+        /// <param name="property">List Property.</param>
+        /// <returns>Type of the List.</returns>
+        public static Type GetListType(PropertyInfo property)
+        {
+            if(!PropertyIsList(property))
+            {
+                return null;
+            }
+
+            var genericArguments = property.PropertyType.GenericTypeArguments;
+            return genericArguments.FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Gets the Type of the List stored in the property parameter.
+        /// </summary>
+        /// <param name="property">List Property.</param>
+        /// <returns>Type of the List.</returns>
+        public static Type GetListType(Type listType)
+        {
+            if (listType == null)
+            {
+                return null;
+            }
+
+            var genericArguments = listType.GenericTypeArguments;
+            return genericArguments.FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Checks if the specified property is a List.
+        /// </summary>
+        /// <param name="property">Property.</param>
+        /// <returns>TRUE: The specified Property is a List.
+        /// FALSE: The specified Property is not a List.</returns>
+        public static bool PropertyIsList(PropertyInfo property)
+        {
+            return TypeNameIsList(property.PropertyType.Name);
+        }
+
+        /// <summary>
+        /// Checks if the specified Type is a List.
+        /// </summary>
+        /// <param name="type">Type.</param>
+        /// <returns>TRUE: The specified Type is a List.
+        /// FALSE: The specified Type is not a List.</returns>
+        public static bool PropertyIsList(Type type)
+        {
+            return TypeNameIsList(type.Name);
+        }
+
+        /// <summary>
+        /// Checks if the specified property is a List of the specified type.
+        /// </summary>
+        /// <param name="property">Property.</param>
+        /// <param name="typeName">Type of the List.</param>
+        /// <returns>TRUE: The specified Property is a List of the specified Type.
+        /// FALSE: The specified Property is not a List of the specified Type.</returns>
+        public static bool PropertyIsListOf(PropertyInfo property, Type type)
+		{
+            return PropertyIsListOf(property, type.Name);
+		}
+
+        /// <summary>
+        /// Checks if the specified property is a List of the specified type.
+        /// </summary>
+        /// <param name="property">Property.</param>
+        /// <param name="typeName">Name of the Type of the List.</param>
+        /// <returns>TRUE: The specified Property is a List of the specified Type.
+        /// FALSE: The specified Property is not a List of the specified Type.</returns>
+        public static bool PropertyIsListOf(PropertyInfo property, string typeName)
+        {
+            var isList = TypeNameIsList(property.PropertyType.Name);
+
+            var genericArguments = property.PropertyType.GenericTypeArguments;
+
+            if (!isList || !genericArguments.Any())
+            {
+                return false;
+            }
+
+            var innerPropertyType = genericArguments[0];
+
+            return TypeHaveBaseType(innerPropertyType, typeName);
+        }
+
+        /// <summary>
+        /// Creates a List of the same Type as the specified property.
+        /// </summary>
+        /// <param name="propertyList">List Property.</param>
+        /// <returns>List of the same Type as the specified property</returns>
+        public static object CreateBusinessObjectsList(PropertyInfo propertyList)
+		{
+            return CreateBusinessObjectsList(propertyList.PropertyType);
+		}
+
+		/// <summary>
+		/// Creates a List of the same Type as the Type of the Object.
+		/// </summary>
+		/// <param name="objectValue">Object.</param>
+		/// <returns>List of the same Type as the specified Object</returns>
+		public static object CreateBusinessObjectsList(object objectValue)
+		{
+            if(objectValue == null)
+            {
+                return null;
+            }
+
+			return CreateBusinessObjectsList(objectValue.GetType());
+		}
+
+		/// <summary>
+		/// Creates a List of the same Type as the specified property.
+		/// </summary>
+		/// <param name="propertyList">List Property.</param>
+		/// <returns>List of the same Type as the specified property</returns>
+		public static object CreateBusinessObjectsList(Type type)
+        {
+            return CreateBusinessObjectsList(type, null);
+        }
+
+        /// <summary>
+		/// Creates a List of the same Type as the specified property.
+		/// </summary>
+		/// <param name="propertyList">List Property.</param>
+		/// <returns>List of the same Type as the specified property</returns>
+		public static object CreateBusinessObjectsList(Type type, params object[] args)
+        {
+            Type listType = null;
+
+            if (type.Name == BaseConstants.ListTypeName)
+            {
+                listType = typeof(List<>);
+            }
+            else if (type.Name == BaseConstants.ObservableCollectionTypeName)
+            {
+                listType = typeof(ObservableCollection<>);
+            }
+
+            Type constructedListType = null;
+
+            if (listType != null)
+            {
+                var innerBusinessObjectType = type.GenericTypeArguments[0];
+                constructedListType = listType.MakeGenericType(innerBusinessObjectType);
+            }
+            else
+            {
+                listType = typeof(List<>);
+                constructedListType = listType.MakeGenericType(type);
+            }
+
+            var businessObjectsList = Activator.CreateInstance(constructedListType, args);
+
+            return businessObjectsList;
+        }
+
+        public static bool PropertyIsList(FieldInfo fieldInfo)
+        {
+			return TypeNameIsList(fieldInfo.FieldType.Name);
+        }
+
+		public static bool TypeNameIsList(string typeName)
+		{
+			return typeName == BaseConstants.ListTypeName 
+				|| typeName == BaseConstants.ObservableCollectionTypeName
+				|| typeName == BaseConstants.IEnumerableTypeName;
+		}
+
+        public static string GetPropertyComment(PropertyInfo property)
+        {
+            //Get the Attributes of the Property.
+            object[] attrs = property.GetCustomAttributes(true);
+
+            foreach (var attribute in attrs)
+            {
+                var fieldCommentAttribute = attribute as FieldCommentAttribute;
+
+                if (fieldCommentAttribute != null)
+                {
+                    return fieldCommentAttribute.Comment;
+                }
+            }
+
+            return string.Empty;
+        }
+
+		/// <summary>
+		/// Checks if the specified property have the specified Attribute Type.
+		/// </summary>
+		/// <param name="property">Property.</param>
+		/// <returns>TRUE: The specified Property have the specified Attribute Type.
+		public static bool HaveAttribute(PropertyInfo property, Type attributeType)
+		{
+			if (property == null)
+			{
+				return false;
+			}
+
+			object[] attrs = property.GetCustomAttributes(true);
+
+			foreach (var attribute in attrs)
+			{
+				if (attribute.GetType() == attributeType)
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+        /// <summary>
+        /// Gets the List of Types from the specified List of Types that have all of the Attributes specified 
+        /// in the List of Attributes Types.
+        /// </summary>
+        /// <param name="types">List of Types.</param>
+        /// <param name="attributeTypes">List of Types of Attributes.</param>
+        /// <returns>List of Types from the specified List of Types that have all of the Attributes specified 
+        /// in the List of Attributes Types.</returns>
+        public static List<Type> GetTypesWithAttributes(List<Type> types, List<Type> attributeTypes)
+        {
+            if(attributeTypes == null)
+            {
+                return types;
+            }
+
+            var typesWithAttributes = new List<Type>();
+
+            foreach (var type in types)
+            {
+                var typeHaveAllAttributes = true;
+
+                foreach (var attributeType in attributeTypes)
+                {
+                    if (Attribute.GetCustomAttribute(type, attributeType) == null)
+                    {
+                        typeHaveAllAttributes = false;
+                        break;
+                    }
+                }
+
+                if (typeHaveAllAttributes)
+                {
+                    typesWithAttributes.Add(type);
+                }
+            }
+
+            return typesWithAttributes;
+        }
+
+        /// <summary>
+        /// Gets the List of Methods from the specified List of Methods that have all of the Attributes specified 
+        /// in the List of Attributes Types.
+        /// </summary>
+        /// <param name="methods">List of MethodInfos.</param>
+        /// <param name="attributeTypes">List of Types of Attributes.</param>
+        /// <returns>List of Methods from the specified List of Methods that have all of the Attributes specified 
+        /// in the List of Attributes Types.</returns>
+        public static IEnumerable<MethodInfo> GetMethodsWithAttributes(IEnumerable<MethodInfo> methods, List<Type> attributeTypes)
+        {
+            if (attributeTypes == null)
+            {
+                return methods;
+            }
+
+            var methodsWithAttributes = new List<MethodInfo>();
+
+            foreach (var method in methods)
+            {
+                var methodHaveAllAttributes = true;
+
+                foreach (var attributeType in attributeTypes)
+                {
+                    if (!method.GetCustomAttributes(attributeType, true).Any())
+                    {
+                        methodHaveAllAttributes = false;
+                        break;
+                    }
+                }
+
+                if (methodHaveAllAttributes)
+                {
+                    methodsWithAttributes.Add(method);
+                }
+            }
+
+            return methodsWithAttributes;
+        }
+
+        public static void SetPropertyValueStringFromXML(object objectFromXml, PropertyInfo objectProperty,
+            string propertyValueInXml)
+        {
+            if(objectProperty.Name == "CompanyId")
+            {
+                var properties = GetPropertiesInfo(objectFromXml.GetType());
+                var companyProperty = properties.FirstOrDefault(x => x.Name == BaseConstants.Company);
+
+                if(companyProperty != null)
+                {
+                    var company = companyProperty.GetValue(objectFromXml);
+                    var companyProperties = GetPropertiesInfo(companyProperty.PropertyType);
+
+                    var idProperty = companyProperties.FirstOrDefault(x => x.Name == BaseConstants.Id);
+
+                    if (company == null)
+                    {
+                        company = CreateInstance<dynamic>(BaseConstants.BusinessObjectsAssemblyName, BaseConstants.Company);
+                    }
+
+                    if(idProperty != null)
+                    {
+                        long longValue = 0;
+                        var converted = long.TryParse(propertyValueInXml, out longValue);
+
+                        if (converted)
+                        {
+                            idProperty.SetValue(company, longValue);
+                        }
+
+                        companyProperty.SetValue(objectFromXml, company);
+                    }
+                }
+
+                return;
+            }
+
+            if (objectProperty.Name == "CompanyCode")
+            {
+                var properties = GetPropertiesInfo(objectFromXml.GetType());
+                var companyProperty = properties.FirstOrDefault(x => x.Name == BaseConstants.Company);
+
+                if (companyProperty != null)
+                {
+                    var company = companyProperty.GetValue(objectFromXml);
+                    var companyProperties = GetPropertiesInfo(companyProperty.PropertyType);
+
+                    var codeProperty = companyProperties.FirstOrDefault(x => x.Name == BaseConstants.Code);
+
+                    if (company == null)
+                    {
+                        company = CreateInstance<dynamic>(BaseConstants.BusinessObjectsAssemblyName, BaseConstants.Company);
+                    }
+
+                    if (codeProperty != null)
+                    {
+                        codeProperty.SetValue(company, propertyValueInXml);
+                    }
+
+                    companyProperty.SetValue(objectFromXml, company);
+                }
+
+                return;
+            }
+
+            if (objectProperty.SetMethod == null)
+            {
+                return;
+            }
+
+            if (objectProperty.PropertyType.IsEnum)
+            {
+                if (string.IsNullOrWhiteSpace(propertyValueInXml))
+                {
+                    return;
+                }
+                else
+                {
+                    var enumValues = Enum.GetValues(objectProperty.PropertyType);
+
+                    foreach (var enumValue in enumValues)
+                    {
+                        if (enumValue.ToString() == propertyValueInXml)
+                        {
+                            objectProperty.SetValue(objectFromXml, enumValue);
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (TypeHaveBaseType(objectProperty.PropertyType, BaseConstants.BaseBusinessObject))
+            {
+                var businessObject = Activator.CreateInstance(objectProperty.PropertyType);
+
+                var businessObjectProperties = GetPropertiesInfo(objectProperty.PropertyType);
+
+                foreach (var property in businessObjectProperties)
+                {
+                    var startTagIndexOf = propertyValueInXml.IndexOf("<" + property.Name + ">");
+
+                    if (startTagIndexOf >= 0)
+                    {
+                        var endTagIndexOf = propertyValueInXml.IndexOf("</" + property.Name + ">", startTagIndexOf + 1);
+
+                        if (endTagIndexOf > 0)
+                        {
+                            var propertyValue = propertyValueInXml.Substring(startTagIndexOf
+                                + property.Name.Length + 2, endTagIndexOf
+                                - startTagIndexOf - property.Name.Length - 2);
+
+                            SetPropertyValueStringFromXML(businessObject, property, propertyValue);
+                        }
+                    }
+                }
+
+                objectProperty.SetValue(objectFromXml, businessObject);
+            }
+            else if(PropertyIsList(objectProperty))
+            {
+                //Get the Type of the List.
+                var propertyListType = objectProperty.PropertyType.GenericTypeArguments[0];
+
+                if (!TypeHaveBaseType(propertyListType, BaseConstants.BaseBusinessObject))
+                {
+                    //TODO: Get List that are not of Business Objects Type.
+                }
+                else
+                {
+                    //Create the Generic List of Business Objects.
+                    var listType = typeof(List<>);
+                    var constructedListType = listType.MakeGenericType(propertyListType);
+
+                    var businessObjectsList = Activator.CreateInstance(constructedListType);
+                    var addMethod = businessObjectsList.GetType().GetMethod("Add");
+
+                    var businessObject = Activator.CreateInstance(propertyListType);
+
+                    for (var i = 0; i < propertyValueInXml.Length; i++)
+                    {
+                        var indexOf = propertyValueInXml.IndexOf("<" + propertyListType.Name, i);
+
+                        if(indexOf >= 0)
+                        {
+                            businessObject = Activator.CreateInstance(propertyListType);
+                            var businessObjectProperties = GetPropertiesInfo(propertyListType);
+
+                            foreach(var property in businessObjectProperties)
+                            {
+                                if(property.Name != "CompanyId" && property.Name != "CompanyCode" && property.SetMethod == null)
+                                {
+                                    continue;
+                                }
+
+                                var startTagIndexOf = propertyValueInXml.IndexOf("<" + property.Name + ">", indexOf);
+
+                                if(startTagIndexOf >= 0)
+                                {
+                                    var endTagIndexOf = propertyValueInXml.IndexOf("</" + property.Name + ">", startTagIndexOf + 1);
+
+                                    if(endTagIndexOf > 0)
+                                    {
+                                        var propertyValue = propertyValueInXml.Substring(startTagIndexOf
+                                            + property.Name.Length + 2, endTagIndexOf 
+                                            - startTagIndexOf - property.Name.Length - 2);
+
+                                        SetPropertyValueStringFromXML(businessObject, property, propertyValue);
+                                        indexOf = endTagIndexOf;
+                                        i = endTagIndexOf + property.Name.Length + 2;
+                                    }
+                                }
+                            }
+
+                            addMethod.Invoke(businessObjectsList, new[] { businessObject });
+                        }
+                    }
+
+                    objectProperty.SetValue(objectFromXml, businessObjectsList);
+                }
+            }
+            else
+            {
+				SetPropertyValue(objectFromXml, propertyValueInXml, objectProperty, 0, "", 0, false);
+			}
+        }
+
+        public static BaseResponse SetPropertyValue(object obj, object propertyValue, PropertyInfo property,
+            long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+        {
+            var propertyValueString = propertyValue == null ? string.Empty : propertyValue.ToString();
+            var message = string.Empty;
+
+            if (property.PropertyType == typeof(long) || property.PropertyType == typeof(long?))
+            {
+                return SetLongProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(decimal) || property.PropertyType == typeof(decimal?))
+            {
+                return SetDecimalProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(int) || property.PropertyType == typeof(int?))
+            {
+                return SetIntegerProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(bool) || property.PropertyType == typeof(bool?))
+            {
+                return SetBoolProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(DateTime) || property.PropertyType == typeof(DateTime?))
+            {
+                return SetDateTimeProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(TimeSpan) || property.PropertyType == typeof(TimeSpan?))
+            {
+                return SetTimeSpanProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(double) || property.PropertyType == typeof(double?))
+            {
+                return SetDoubleProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(float) || property.PropertyType == typeof(float?))
+            {
+                return SetFloatProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(Guid) || property.PropertyType == typeof(Guid?))
+            {
+                return SetGuidProperty(obj, propertyValueString, property, languageId, propertyName, rowNumber, sendErrors);
+            }
+            else if (property.PropertyType == typeof(string))
+            {
+                property.SetValue(obj, propertyValueString);
+            }
+            //If the Type of the Property is a Business Object.
+            //Create an instance of the Business Object and set its Id.
+            else if (TypeHaveBaseType(property.PropertyType, BaseConstants.BaseBusinessObject))
+            {
+                //If the Property is a Business Object, then its value must be a Business Object or an Id.
+                //Check if the Object Value is a Business Object.
+                var valueType = propertyValue.GetType();
+
+                if (TypeHaveBaseType(valueType, BaseConstants.BaseBusinessObject))
+                {
+                    property.SetValue(obj, propertyValue);
+                }
+                else if (valueType == typeof(long) || valueType == typeof(int))
+                {
+                    //Create the Business Object.
+                    var innerBusinessObject = ReflectionUtil.CreateInstance<dynamic>
+                    (BaseConstants.BusinessObjectsAssemblyName, property.PropertyType.FullName);
+
+                    if (innerBusinessObject == null)
+                    {
+                        message = MultiLanguageXmlReader.GetString<ReflectionUtil>("CantCreateInstance", languageId);
+                        message = string.Format(property.PropertyType.FullName, BaseConstants.BusinessObjectsAssemblyName);
+                    }
+                    else
+                    {
+                        var innerProperties = ReflectionUtil.GetPropertiesInfo(innerBusinessObject.GetType()) as List<PropertyInfo>;
+                        var idProperty = innerProperties.FirstOrDefault(x => x.Name == BaseConstants.Id);
+
+                        if (idProperty != null)
+                        {
+                            idProperty.SetValue(innerBusinessObject, propertyValue);
+
+                            property.SetValue(obj, innerBusinessObject);
+                        }
+                    }
+                }
+            }
+            else if (property.PropertyType == typeof(byte[]))
+            {
+                property.SetValue(obj, propertyValue);
+            }
+            else
+			{
+				message = MultiLanguageXmlReader.GetString<ReflectionUtil>("InvalidPropertyTypeToSet", languageId);
+				message = string.Format(property.Name, property.PropertyType);
+			}
+
+			var response = new BaseResponse
+            {
+				Message = message
+			};
+
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+			return response;
+		}
+
+		public static BaseResponse SetLongProperty(object obj, string longString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+			long longValue = 0;
+			var converted = long.TryParse(longString, out longValue);
+			var response = new BaseResponse();
+			var message = string.Empty;
+
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = longString == null ? string.Empty : longString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, longValue);
+			}
+			else if(!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotLong", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotLong", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+		public static BaseResponse SetDecimalProperty(object obj, string decimalString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+            //Replace escaped " characters. For instance \"234\".
+            decimalString = decimalString.Replace("\"", "");
+
+			decimal decimalValue = 0;
+			var converted = decimal.TryParse(decimalString, out decimalValue);
+			var response = new BaseResponse();
+			var message = string.Empty;
+
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = decimalString == null ? string.Empty : decimalString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, decimalValue);
+			}
+			else if (!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotDecimal", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotDecimal", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+		public static BaseResponse SetIntegerProperty(object obj, string integerString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+			int integerValue = 0;
+			var converted = int.TryParse(integerString, out integerValue);
+			var response = new BaseResponse();
+			var message = string.Empty;
+
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = integerString == null ? string.Empty : integerString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, integerValue);
+			}
+			else if (!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotInteger", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotInteger", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+		public static BaseResponse SetBoolProperty(object obj, string boolString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+			var response = new BaseResponse();
+
+			if (string.IsNullOrWhiteSpace(boolString))
+			{
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+			}
+
+			bool boolValue = false;
+			var converted = bool.TryParse(boolString, out boolValue);
+			var message = string.Empty;
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = boolString == null ? string.Empty : boolString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, boolValue);
+			}
+			else if (!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotBool", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotBool", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+		public static BaseResponse SetDateTimeProperty(object obj, string dateTimeString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+			DateTime dateTimeValue;
+			var converted = DateTime.TryParse(dateTimeString, out dateTimeValue);
+			var response = new BaseResponse();
+			var message = string.Empty;
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = dateTimeString == null ? string.Empty : dateTimeString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+				return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, dateTimeValue);
+			}
+			else if (!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotDateTime", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotDateTime", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+        public static BaseResponse SetTimeSpanProperty(object obj, string timeSpanString, PropertyInfo property,
+            long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+        {
+            TimeSpan timeSpanValue;
+            var converted = TimeSpan.TryParse(timeSpanString, out timeSpanValue);
+            var response = new BaseResponse();
+            var message = string.Empty;
+            var nullLowerString = BaseConstants.NULL.ToLower();
+            var lowerValueString = timeSpanString == null ? string.Empty : timeSpanString.ToString().ToLower();
+
+            if (lowerValueString == nullLowerString)
+            {
+                property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+            }
+
+            if (timeSpanValue == TimeSpan.MinValue || timeSpanValue == TimeSpan.MaxValue)
+            {
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+            }
+
+            if (converted)
+            {
+                property.SetValue(obj, timeSpanValue);
+            }
+            else if (!converted)
+            {
+                message = "The value " + timeSpanString + " of the Property " + property.Name + " is not a valid TimeSpan.";
+            }
+
+            response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+        }
+
+        public static BaseResponse SetDoubleProperty(object obj, string doubleString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+			double doubleValue;
+			var converted = double.TryParse(doubleString, out doubleValue);
+			var response = new BaseResponse();
+			var message = string.Empty;
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = doubleString == null ? string.Empty : doubleString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, doubleValue);
+			}
+			else if (!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotDouble", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotDouble", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+		public static BaseResponse SetFloatProperty(object obj, string floatString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+			float floatValue;
+			var converted = float.TryParse(floatString, out floatValue);
+			var response = new BaseResponse();
+			var message = string.Empty;
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = floatString == null ? string.Empty : floatString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+				response.ResponseType = ResponseTypeEnum.Success;
+				return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, floatValue);
+			}
+			else if (!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotFloat", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotFloat", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+		public static BaseResponse SetGuidProperty(object obj, string guidString, PropertyInfo property,
+			long languageId, string propertyName = "", long rowNumber = 0, bool sendErrors = true)
+		{
+			Guid guidValue;
+			var converted = Guid.TryParse(guidString, out guidValue);
+			var response = new BaseResponse();
+			var message = string.Empty;
+			var nullLowerString = BaseConstants.NULL.ToLower();
+			var lowerValueString = guidString == null ? string.Empty : guidString.ToString().ToLower();
+
+			if (lowerValueString == nullLowerString)
+			{
+				property.SetValue(obj, null);
+                response.ResponseType = ResponseTypeEnum.Success;
+				return response;
+			}
+
+			if (converted)
+			{
+				property.SetValue(obj, guidValue);
+			}
+			else if (!converted && sendErrors)
+			{
+				if (rowNumber > 0)
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ValueInRowIsNotGuid", languageId);
+					message = string.Format(message, rowNumber, propertyName);
+				}
+				else
+				{
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("PropertyValueIsNotGuid", languageId);
+
+					if (!string.IsNullOrEmpty(propertyName))
+					{
+						message = string.Format(message, propertyName);
+					}
+					else
+					{
+						message = string.Format(message, property.Name);
+					}
+				}
+			}
+
+			response.Message = message;
+            response.ResponseType = string.IsNullOrEmpty(message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+		}
+
+		/// <summary>
+		/// Converts the string value to the Type of the specified Property.
+		/// </summary>
+		/// <param name="property">Property.</param>
+		/// <param name="value">Value as a string.</param>
+		/// <returns>The String value is converted to the Type of the specified Property.</returns>
+		public static object GetPropertyValueOfType(PropertyInfo property, object value)
+		{
+			if(value == null)
+			{
+				return null;
+			}
+
+			var valueString = value.ToString();
+			var propertyType = property.PropertyType;
+			var converted = false;
+
+			if(propertyType == typeof(string))
+			{
+				return value;
+			}
+			else if(propertyType == typeof(int) || propertyType == typeof(int?))
+			{
+				int intValue = 0;
+				converted = int.TryParse(valueString, out intValue);
+
+				if(converted)
+				{
+					return intValue;
+				}
+                else if(propertyType == typeof(int))
+                {
+                    return 0;
+                }
+                else if (propertyType == typeof(int?))
+                {
+                    return null;
+                }
+            }
+			else if(propertyType == typeof(long) || propertyType == typeof(long?))
+			{
+				long longValue = 0;
+				converted = long.TryParse(valueString, out longValue);
+
+				if (converted)
+				{
+					return longValue;
+				}
+                else if (propertyType == typeof(long))
+                {
+                    return (long)0;
+                }
+                else if (propertyType == typeof(long?))
+                {
+                    return null;
+                }
+            }
+			else if (propertyType == typeof(double) || propertyType == typeof(double?))
+			{
+				double doubleValue = 0;
+				converted = double.TryParse(valueString, out doubleValue);
+
+				if (converted)
+				{
+					return doubleValue;
+				}
+                else if (propertyType == typeof(double))
+                {
+                    return (double)0;
+                }
+                else if (propertyType == typeof(double?))
+                {
+                    return null;
+                }
+            }
+			else if (propertyType == typeof(decimal) || propertyType == typeof(decimal?))
+			{
+				decimal decimalValue = 0;
+				converted = decimal.TryParse(valueString, out decimalValue);
+
+				if (converted)
+				{
+					return decimalValue;
+				}
+                else if (propertyType == typeof(decimal))
+                {
+                    return (decimal)0;
+                }
+                else if (propertyType == typeof(decimal?))
+                {
+                    return null;
+                }
+            }
+			else if (propertyType == typeof(bool) || propertyType == typeof(bool?))
+			{
+				bool boolValue = false;
+				converted = bool.TryParse(valueString, out boolValue);
+
+				if (converted)
+				{
+					return boolValue;
+				}
+                else if (propertyType == typeof(bool))
+                {
+                    return false;
+                }
+                else if (propertyType == typeof(bool?))
+                {
+                    return null;
+                }
+            }
+			else if (propertyType == typeof(DateTime) || propertyType == typeof(DateTime?))
+			{
+				DateTime dateTimeValue = DateTime.MinValue;
+				converted = DateTime.TryParse(valueString, out dateTimeValue);
+
+			    return dateTimeValue;
+			}
+			else if (propertyType == typeof(float) || propertyType == typeof(float?))
+			{
+				float floatValue = 0;
+				converted = float.TryParse(valueString, out floatValue);
+
+				if (converted)
+				{
+					return floatValue;
+				}
+                else if (propertyType == typeof(float))
+                {
+                    return (float)0;
+                }
+                else if (propertyType == typeof(float?))
+                {
+                    return null;
+                }
+            }
+
+			return value;
+		}
+
+		/// <summary>
+		/// Adds the object stored in the objectToAdd parameter to the List stored in the listObject parameter.
+		/// </summary>
+		/// <param name="listObject">List stored in an object.</param>
+		/// <param name="objectToAdd">Object to Add to the List.</param>
+		public static void AddObjectToList(object listObject, object objectToAdd)
+		{
+            if(listObject == null)
+            {
+                listObject = CreateBusinessObjectsList(objectToAdd);
+            }
+
+			InvokeMethod(listObject, "Add", false, true, new object[] { objectToAdd });
+		}
+
+		/// <summary>
+		/// Removes the object specified in the objectToAdd parameter to the List specified in the listObject parameter.
+		/// </summary>
+		/// <param name="listObject">List stored in an object.</param>
+		/// <param name="objectToRemove">Object to Remove from the List.</param>
+		public static void RemoveObjectFromList(object listObject, object objectToRemove)
+		{
+			InvokeMethod(listObject, "Remove", false, true, new object[] { objectToRemove });
+		}
+
+		/// <summary>
+		/// Invokes the Method of the specified object, if exists, with the specified methodName.
+		/// </summary>
+		/// <param name="obj">Object.</param>
+		/// <param name="methodName">Name of the Method to Invoke. Method must be void and parameterless.</param>
+		/// <param name="isAsync">Indicates if the Method to invoke is an async Method.</param>
+		/// <param name="throwException">TRUE: If the Method is not found in the specified object, an exception will be thrown.</param>
+		/// <param name="parameters">List of Parameters to the specified Method.</param>
+		public static async void InvokeMethod(object obj, string methodName, bool isAsync = false, 
+			bool throwException = true, object[] parameters = null)
+        {
+            var type = obj.GetType();
+			var message = string.Empty;
+
+            //Get the Method.
+            MethodInfo method = type.GetMethod(methodName);
+
+            if(method == null)
+            {
+                //If the object is a View and does not have the specified Method Name, try to find the Method in its DataContext.
+                if(TypeHaveBaseType(type, "BaseView"))
+                {
+                    var properties = GetPropertiesInfo(type);
+                    var dataContextProperty = properties.FirstOrDefault(x => x.Name == BaseConstants.DataContext);
+
+                    if(dataContextProperty != null)
+                    {
+                        var dataContext = dataContextProperty.GetValue(obj);
+
+                        if(dataContext != null)
+                        {
+                            method = dataContext.GetType().GetMethod(methodName);
+
+                            if(method != null)
+                            {
+                                if (isAsync)
+                                {
+                                    await (dynamic)method.Invoke(dataContext, parameters);
+                                }
+                                else
+                                {
+                                    method.Invoke(dataContext, parameters);
+                                }
+
+                                return;
+                            }
+							else if(throwException)
+							{
+								message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ViewAndDataContextWithNoMethod", 1);
+								message = string.Format(message, type.Name, dataContext.GetType().Name, methodName);
+								throw new BusinessLogicException(message);
+							}
+                        }
+                    }
+					else
+					{
+						message = MultiLanguageXmlReader.GetString<ReflectionUtil>("ViewWithNoDataContext", 1);
+						message = string.Format(message, type.Name, BaseConstants.DataContext);
+						throw new BusinessLogicException(message);
+					}
+                }
+
+                if (method == null && throwException)
+                {
+					message = MultiLanguageXmlReader.GetString<ReflectionUtil>("TypeWithNoMethod", 1);
+					message = string.Format(message, type.Name, methodName);
+                    throw new BusinessLogicException(message);
+                }
+                else if (method == null)
+                {
+                    return;
+                }
+            }
+
+            if (isAsync)
+            {
+                await (dynamic)method.Invoke(obj, parameters);
+            }
+            else
+            {
+                method.Invoke(obj, parameters);
+            }
+        }
+
+		/// <summary>
+		/// Gets the Count from the object where the object is an IEnumerable.
+		/// </summary>
+		/// <param name="listObject">List stored in an object.</param>
+		public static int GetCountFromList(object listObject)
+		{
+			var methodName = "Count";
+			var countProperty = listObject.GetType().GetProperty(methodName);
+
+			if (countProperty == null)
+			{
+				throw new BusinessLogicException("The Type " + listObject + " does not contains the "
+					+ methodName + " Property");
+			}
+
+			var count = countProperty.GetValue(listObject);
+
+			return (int)count;
+		}
+
+        /// <summary>
+        /// Gets the Type of the Business Object associated to the specified Enum.
+        /// BusinessObjectEnum with same type than the specified Enum Type.
+        /// </summary>
+        /// <typeparam name="T">Enum Type.</typeparam>
+        /// <returns>Type of the Business Object associated to the specified Enum.</returns>
+        public static Type GetBusinessObjectFromEnum<T>() where T : struct, IConvertible
+        {
+            var businessObjectDll = Path.Combine(Environment.CurrentDirectory, BaseConstants.BusinessObjectsAssemblyName);
+
+            if(!File.Exists(businessObjectDll))
+            {
+                throw new BusinessLogicException("The File " + businessObjectDll + " does not exists.");
+            }
+
+            List<ExceptionDTO> exceptions;
+            var businessObjects = GetClassesFromAssembly(businessObjectDll, out exceptions);
+
+            //Search all of the Business Objects with Generic Types.
+            var businessObject = businessObjects.FirstOrDefault(x => x.BaseType.GenericTypeArguments.Any() && x.BaseType.GenericTypeArguments[0] == typeof(T));
+
+            if(businessObject == null)
+            {
+                throw new BusinessLogicException("There is no Business Object associated to the Enum " + typeof(T).Name);
+            }
+
+            return businessObject;
+        }
+
+        /// <summary>
+        /// Gets the list of Objects from a Json String.
+        /// This method does not use NewtonSoft.JSON as this library does not work always.
+        /// Examples of Valid JSON strings
+        /// For a single object: {"Id": 2, "Code": "pp"}
+        /// For a List of Objects [{ "Id": 1, "Code": "First"}, { "Id": 2, "Code": "Second"}]
+        /// </summary>
+        /// <typeparam name="T">Type of the list of Objects.</typeparam>
+        /// <param name="jsonText">String in Json Format.</param>
+        /// <returns>List of objects obtained from the Json string.</returns>
+        public static List<T> GetListFromJSON<T>(string jsonText) where T : new()
+        {
+            if (string.IsNullOrEmpty(jsonText))
+            {
+                return new List<T>();
+            }
+
+            var malformedMessage = "Malformed JSON. Examples:" + Environment.NewLine
+                        + "For a single object: {\"Id\": 2, \"Code\": \"pp\"}" + Environment.NewLine
+                        + "For a List of Objects [{ \"Id\": 1, \"Code\": \"First\"}, { \"Id\": 2, \"Code\": \"Second\"}]";
+
+            var objectsList = new List<T>();
+            var properties = GetPropertiesInfo(typeof(T)).Where(x => x.SetMethod != null);
+
+            for (var i = 0; i < jsonText.Length; i++)
+            {
+                var indexOf = jsonText.IndexOf("{", i);
+
+                if (indexOf < 0)
+                {
+                    break;
+                }
+
+                var endIndexOf = jsonText.GetClosedParenthesisPosition(indexOf);
+
+                if (endIndexOf < 0)
+                {
+                    throw new BusinessLogicException(malformedMessage);
+                }
+
+                var objString = jsonText.Substring(indexOf, endIndexOf - indexOf + 1);
+                var obj = GetObjectFromJSON<T>(objString, properties, malformedMessage);
+
+                objectsList.Add(obj);
+
+                i = endIndexOf;
+            }
+
+            return objectsList;
+        }
+
+        /// <summary>
+        /// Gets an Object T from the specified JSON string.
+        /// </summary>
+        /// <typeparam name="T">Type of the Object to obtained from the JSON string.</typeparam>
+        /// <param name="jsonText">String in JSON Format.</param>
+        /// <param name="properties">List of Properties of the Object. Optional parameter.</param>
+        /// <param name="malformedMessage">Message to send if the JSON string is malformed and cannot be parsed. Optional Parameter.</param>
+        /// <returns>Object T from the specified JSON string</returns>
+        public static T GetObjectFromJSON<T>(string jsonText, IEnumerable<PropertyInfo> properties = null, string malformedMessage = "") where T : new()
+        {
+            if (properties == null)
+            {
+                properties = GetPropertiesInfo<T>().Where(x => x.SetMethod != null);
+            }
+
+            var obj = new T();
+
+            if (string.IsNullOrEmpty(malformedMessage))
+            {
+                malformedMessage = "Malformed JSON. Examples:" + Environment.NewLine
+                            + "For a single object: {\"Id\": 2, \"Code\": \"pp\"}" + Environment.NewLine
+                            + "For a List of Objects [{ \"Id\": 1, \"Code\": \"First\"}, { \"Id\": 2, \"Code\": \"Second\"}]";
+            }
+
+            foreach (var property in properties)
+            {
+                var propertyName = "\"" + property.Name + "\":";
+
+                var indexOf = jsonText.IndexOf(propertyName);
+
+                if (indexOf < 0)
+                {
+                    continue;
+                }
+
+                var endIndexOf = jsonText.IndexOf(",", indexOf);
+
+                if (endIndexOf < 0)
+                {
+                    //Check if this is the Last Property.
+                    endIndexOf = jsonText.IndexOf("}", indexOf);
+
+                    if (endIndexOf < 0)
+                    {
+                        throw new BusinessLogicException(malformedMessage);
+                    }
+                }
+
+                var propertyValue = jsonText.Substring(indexOf + propertyName.Length, endIndexOf - indexOf - propertyName.Length);
+
+                if (!string.IsNullOrWhiteSpace(propertyValue))
+                {
+                    if (propertyValue.StartsWith("[{") || propertyValue.StartsWith("\"[{"))
+                    {
+                        endIndexOf = jsonText.IndexOf("]", indexOf);
+
+                        if (endIndexOf > 0)
+                        {
+                            propertyValue = jsonText.Substring(indexOf + propertyName.Length, endIndexOf - indexOf - propertyName.Length + 1);
+                        }
+                    }
+
+                    propertyValue = propertyValue.Trim();
+
+                    if (propertyValue.StartsWith("\""))
+                    {
+                        propertyValue = propertyValue.Substring(1);
+                    }
+                    if (propertyValue.EndsWith("\""))
+                    {
+                        propertyValue = propertyValue.Substring(0, propertyValue.Length - 1);
+                    }
+                }
+
+                var response = SetPropertyValue(obj, propertyValue, property, 1);
+
+                if (!response.Success)
+                {
+                    throw new BusinessLogicException(response.Message);
+                }
+            }
+
+            return obj;
+        }
+
+        /// <summary>
+        /// Get the Relation Properties of the Specified Type.
+        /// Relation Properties are Properties of Type Business Object, except CreatedBy, UpdatedBy and DeletedBy.
+        /// </summary>
+        /// <param name="type">Type</param>
+        /// <returns>Relation Properties of the Specified Type.</returns>
+        public static List<string> GetRelationProperties(Type type)
+        {
+            var businessObjectProperties = GetPropertiesInfo(type);
+
+            var relationProperties = businessObjectProperties.Where(x => x.Name != BaseConstants.CreatedBy
+                                                                 && x.Name != BaseConstants.UpdatedBy
+                                                                 && x.Name != BaseConstants.DeletedBy
+                                                                 && x.SetMethod != null
+                                                                 && TypeHaveBaseType(x.PropertyType, BaseConstants.BaseBusinessObject)
+                                                                 && !HaveAttribute(x, typeof(ExcludeMappingAttribute)))
+                                                                 .Select(x => x.Name)
+                                                                 .ToList();
+
+            return relationProperties;
+        }
+
+        public static List<DependencyProperty> GetDependencyProperties(object element)
+        {
+            List<DependencyProperty> properties = new List<DependencyProperty>();
+            MarkupObject markupObject = MarkupWriter.GetMarkupObjectFor(element);
+
+            if (markupObject != null)
+            {
+                foreach (MarkupProperty mp in markupObject.Properties)
+                {
+                    if (mp.DependencyProperty != null)
+                    {
+                        properties.Add(mp.DependencyProperty);
+                    }
+                }
+            }
+
+            return properties;
+        }
+
+        public static object GetBusinessObjectEnumFromProperty(PropertyInfo property, string propertyValueInXml)
+        {
+            var innerBusinessObject = ReflectionUtil.CreateInstance<dynamic>(BaseConstants.BusinessObjectsAssemblyName, property.PropertyType.Name);
+
+            if (innerBusinessObject != null)
+            {
+                //Set the Id = to the Enum Value.
+                List<PropertyInfo> innerProperties = ReflectionUtil.GetPropertiesInfo(innerBusinessObject);
+                var idProperty = innerProperties.FirstOrDefault(x => x.Name == BaseConstants.Id);
+
+                var businessObjectEnumType = innerBusinessObject.GetType();
+
+                while (!businessObjectEnumType.Name.Contains(BaseConstants.BusinessObjectEnum))
+                {
+                    businessObjectEnumType = businessObjectEnumType.BaseType;
+                }
+
+                //Get Type of the Enum.
+                Type enumType = businessObjectEnumType.GetGenericArguments()[0];
+                object currentEnumValue = null;
+
+                if (idProperty != null)
+                {
+                    var enumValues = Enum.GetValues(enumType);
+
+                    foreach (var enumValue in enumValues)
+                    {
+                        if (enumValue.ToString() == propertyValueInXml)
+                        {
+                            currentEnumValue = enumValue;
+                            idProperty.SetValue(innerBusinessObject, (int)enumValue);
+                            break;
+                        }
+                    }
+                }
+
+                var codeProperty = innerProperties.FirstOrDefault(x => x.Name == BaseConstants.Code);
+
+                if (codeProperty != null)
+                {
+                    codeProperty.SetValue(innerBusinessObject, propertyValueInXml);
+                }
+
+                var nameProperty = innerProperties.FirstOrDefault(x => x.Name == BaseConstants.Name);
+
+                //Get the Value of the Enum in the XML File.
+                if(nameProperty != null && currentEnumValue != null)
+                {
+                    var name = MultiLanguageXmlReader.GetString(enumType, currentEnumValue.ToString());
+                    nameProperty.SetValue(innerBusinessObject, name);
+                }
+            }
+
+            return innerBusinessObject;
+        }
+
+        #region Property Grid
+
+        private static List<bool> _booleanValues;
+        public static List<bool> BooleanValues
+        {
+            get
+            {
+                if (_booleanValues == null)
+                {
+                    _booleanValues = new List<bool>
+                    {
+                        true,
+                        false
+                    };
+                }
+
+                return _booleanValues;
+            }
+        }
+
+        /// <summary>
+        /// Get the List of Values for the specified Property Value.
+        /// </summary>
+        /// <param name="propertyValue">Value of the Property.</param>
+        /// <returns>List of Values for the specified Property Value.</returns>
+        public static IEnumerable<object> GetPropertyValues(object propertyValue)
+        {
+            if(propertyValue == null)
+            {
+                return null;
+            }
+
+            var propertyValues = new List<object>();
+
+            if (propertyValue.GetType() == typeof(bool))
+            {
+                foreach (var boolean in BooleanValues)
+                {
+                    AddObjectToList(propertyValues, boolean);
+                }
+
+                return propertyValues;
+            }
+            else if (propertyValue.GetType().IsEnum)
+            {
+                var enumValues = Enum.GetValues(propertyValue.GetType());
+
+                foreach(var enumValue in enumValues)
+                {
+                    propertyValues.Add(enumValue);
+                }
+
+                return propertyValues;
+            }
+
+            return null;
+        }
+
+        public static IEnumerable<KeyValuePair<string, Color>> GetColors()
+        {
+            var colors = typeof(Colors)
+                .GetProperties()
+                .Where(prop => typeof(Color).IsAssignableFrom(prop.PropertyType))
+                .Select(prop => new KeyValuePair<string, Color>(prop.Name, (Color)prop.GetValue(null)))
+                .ToList();
+
+            var veryLightGrey = new KeyValuePair<string, Color>("Very Light Grey", Color.FromArgb(255, 204, 204, 204));
+
+            var existsVeryLightGrey = colors.FirstOrDefault(x => x.Value == veryLightGrey.Value);
+
+            if(existsVeryLightGrey.Value != null)
+            {
+                AddObjectToList(colors, veryLightGrey);
+
+                colors = colors.OrderBy(x => x.Key).ToList();
+            }
+
+            return colors;
+        }
+
+        /// <summary>
+        /// List of PropertyInfo of the object.
+        /// </summary>
+        /// <param name="obj">Object to get the Properties.</param>
+        /// <returns>List of Properties of the Object.</returns>
+        public static List<PropertyInfo> GetPropertiesInfoForPropertyGrid(object obj, bool orderedByName = true)
+        {
+            if (obj == null)
+            {
+                return null;
+            }
+
+            var properties = GetPropertiesInfo(obj.GetType(), orderedByName);
+
+            var excludedProperties = new List<string>
+            {
+                "ActualHeight",
+                "ActualWidth",
+                "AreAnyTouchesCaptured",
+                "AreAnyTouchesCapturedWithin",
+                "AreAnyTouchesDirectlyOver",
+                "AreAnyTouchesOver",
+                "BitmapEffect",
+                "BitmapEffectInput",
+                "CacheMode",
+                "CanRedo",
+                "CanUndo",
+                "CaretIndex",
+                "Clip",
+                "ClipToBounds",
+                "CommandBindings",
+                "ContextMenu",
+                "Cursor",
+                "DataContext",
+                "DependencyObjectType",
+                "DesiredSize",
+                "Dispatcher",
+                "Effect",
+                "ExtentHeight",
+                "ExtentWidth",
+                "HasAnimatedProperties",
+                "HorizontalOffset",
+                "InputBindings",
+                "IsArrangeValid",
+                "IsFocused",
+                "IsInitialized",
+                "IsInputMethodEnabled",
+                "IsKeyboardFocused",
+                "IsKeyboardFocusWithin",
+                "IsLoaded",
+                "IsMeasureValid",
+                "IsMouseCaptured",
+                "IsMouseCaptureWithin",
+                "IsMouseDirectlyOver",
+                "IsMouseOver",
+                "IsSealed",
+                "IsSelectionActive",
+                "IsStylusCaptured",
+                "IsStylusCaptureWithin",
+                "IsStylusDirectlyOver",
+                "IsStylusOver",
+                "IsVisible",
+                "Language",
+                "LineCount",
+                "Name",
+                "Parent",
+                "PersistId",
+                "RenderSize",
+                "SelectedText",
+                "SelectionLength",
+                "SelectionStart",
+                "SelectionTextBrush",
+                "SpellCheck",
+                "TabIndex",
+                "Template",
+                "TemplatedParent",
+                "TextAlignment",
+                "TouchesCaptured",
+                "TouchesCapturedWithin",
+                "TouchesDirectlyOver",
+                "TouchesOver",
+                "Triggers",
+                "VerticalOffset",
+                "ViewportHeight",
+                "ViewportWidth"
+            };
+
+            return properties.Where(x => !excludedProperties.Contains(x.Name)).ToList();
+        }
+
+        public static List<FontStretch> FontStretchesList(List<FontStretch> excludedValues = null)
+        {
+            var fontStretches = new List<FontStretch>
+            {
+                FontStretches.Condensed,
+                FontStretches.Expanded,
+                FontStretches.ExtraCondensed,
+                FontStretches.ExtraExpanded,
+                FontStretches.Medium
+            };
+
+            if (excludedValues != null)
+            {
+                if (!excludedValues.Contains(FontStretches.Normal))
+                {
+                    fontStretches.Add(FontStretches.Normal);
+                }
+            }
+
+            fontStretches.Add(FontStretches.SemiCondensed);
+            fontStretches.Add(FontStretches.SemiExpanded);
+            fontStretches.Add(FontStretches.UltraCondensed);
+            fontStretches.Add(FontStretches.UltraExpanded);
+
+            return fontStretches;
+        }
+
+        public static List<FontWeight> FontWeightsList(List<FontWeight> excludedValues = null)
+        {
+            var fontWeights = new List<FontWeight>
+            {
+                FontWeights.Black,
+                FontWeights.Bold,
+                FontWeights.DemiBold,
+                FontWeights.ExtraBlack,
+                FontWeights.ExtraBold,
+                FontWeights.ExtraLight,
+                FontWeights.Heavy,
+                FontWeights.Light,
+                FontWeights.Medium
+            };
+
+            if (excludedValues != null)
+            {
+                if (!excludedValues.Contains(FontWeights.Normal))
+                {
+                    fontWeights.Add(FontWeights.Normal);
+                }
+            }
+
+            fontWeights.Add(FontWeights.Regular);
+            fontWeights.Add(FontWeights.SemiBold);
+            fontWeights.Add(FontWeights.Thin);
+            fontWeights.Add(FontWeights.UltraBlack);
+            fontWeights.Add(FontWeights.UltraBold);
+            fontWeights.Add(FontWeights.UltraLight);
+
+            return fontWeights;
+        }
+
+        #endregion Property Grid
+
+        #endregion Methods
+    }
+}
