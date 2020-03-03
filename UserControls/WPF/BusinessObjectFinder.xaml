@@ -1,0 +1,149 @@
+<baseUserControls:BaseUserControl x:Class="Framework.UserControls.BusinessObjectFinders.Base.BusinessObjectFinder"
+                                  xmlns:baseUserControls="clr-namespace:Framework.UserControls.Base"
+                                  xmlns:fwkUserControls="clr-namespace:Framework.UserControls.General"
+                                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+                                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                                  xmlns:Controls="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+                                  mc:Ignorable="d"
+                                  Height="Auto" 
+                                  Width="Auto"
+                                  xmlns:i="clr-namespace:System.Windows.Interactivity;assembly=System.Windows.Interactivity"
+                                  xmlns:converters="clr-namespace:Framework.Converters"
+                                  Focusable="True">
+
+    <i:Interaction.Triggers>
+        <i:EventTrigger EventName="Loaded">
+            <i:InvokeCommandAction Command="{Binding LoadedEventCommand, RelativeSource={RelativeSource Mode=FindAncestor,
+                AncestorType={x:Type UserControl}}}"/>
+        </i:EventTrigger>
+        <i:EventTrigger EventName="GotFocus">
+            <i:InvokeCommandAction Command="{Binding UserControlGotFocusCommand, RelativeSource={RelativeSource Mode=FindAncestor,
+                AncestorType={x:Type UserControl}}}"/>
+        </i:EventTrigger>
+        <i:EventTrigger EventName="LostFocus">
+            <i:InvokeCommandAction Command="{Binding UserControlLoseFocusCommand, RelativeSource={RelativeSource Mode=FindAncestor,
+                AncestorType={x:Type UserControl}}}"/>
+        </i:EventTrigger>
+    </i:Interaction.Triggers>
+
+    <UserControl.Resources>
+        <converters:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter"/>
+    </UserControl.Resources>
+
+    <Grid DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type UserControl}}}"
+          x:Name="Grid">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!--<Button HorizontalAlignment="Left" 
+                TabIndex="{Binding Path=TabIndex, RelativeSource={RelativeSource Mode=FindAncestor,
+                AncestorType={x:Type UserControl}}}"
+                Grid.Column="0"
+                Grid.Row="0" 
+                MinWidth="50" 
+                MinHeight="25" 
+                IsTabStop="True"
+                IsEnabled="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                Command="{Binding OpenSearchViewCommand}" 
+                Style="{DynamicResource OrangeButtonRoundCorner}"
+                Content="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                ToolTip="{Binding ToolTip, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>-->
+
+        <fwkUserControls:Button HorizontalAlignment="Left"
+                Grid.Column="0"
+                Grid.Row="0" 
+                MinWidth="50" 
+                MinHeight="25" 
+                IsTabStop="True"
+                ButtonCommand="{Binding OpenSearchViewCommand}" 
+                Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                ButtonTooltip="{Binding ToolTip, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                ButtonImage="{Binding ButtonImage, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                x:Name="ButtonImg"
+                SizeChanged="ButtonImg_SizeChanged">
+            <fwkUserControls:Button.ContextMenu>
+                <ContextMenu>
+
+                    <MenuItem Command="{Binding OpenViewAsyncCommand}" 
+                              Header="{Binding OpenWithText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Icon="{Binding OpenWithIcon}"
+                              Height="26"
+                              FontSize="12"
+                              FontFamily="Candara"
+                              Visibility="{Binding OpenWithMenuVisibility, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                </ContextMenu>
+            </fwkUserControls:Button.ContextMenu>
+        </fwkUserControls:Button>
+
+        <TextBox HorizontalAlignment="{Binding TextBoxHorizontalAlignment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                 Height="27" 
+                 Grid.Column="1" 
+                 Grid.Row="0" 
+                 MinWidth="50" 
+                 IsTabStop="True"
+                 Margin="5,1,0,0" 
+                 Text="{Binding SelectedText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                 VerticalContentAlignment="Center" 
+                 x:Name="BusinessObjectTextBox"
+                 IsReadOnly="{Binding ReadOnlyMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                 Controls:TextBoxHelper.ClearTextButton="{Binding ClearTextButton, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                 Controls:TextBoxHelper.SelectAllOnFocus="True"
+                 Background="{Binding TextBoxBackground, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                 Width="{Binding TextboxWidth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+            <TextBox.ContextMenu>
+                <ContextMenu>
+                    
+                    <MenuItem Command="{Binding OpenViewAsyncCommand}" 
+                              Header="{Binding OpenWithText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Icon="{Binding OpenWithIcon}"
+                              Height="26"
+                              FontSize="12"
+                              FontFamily="Candara"
+                              Visibility="{Binding OpenWithMenuVisibility, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                    <MenuItem Command="ApplicationCommands.Cut" 
+                              Icon="{Binding CutIcon}"
+                              Header="{Binding CutText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Height="26"
+                              FontSize="12"
+                              Margin="0,4,0,0"
+                              FontFamily="Candara"/>
+                    <MenuItem Command="ApplicationCommands.Copy" 
+                              Icon="{Binding CopyIcon}"
+                              Header="{Binding CopyText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Height="26"
+                              FontSize="12"
+                              Margin="0,4,0,0"
+                              FontFamily="Candara"/>
+                    <MenuItem Command="ApplicationCommands.Paste" 
+                              Icon="{Binding PasteIcon}"
+                              Header="{Binding PasteText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Height="26"
+                              FontSize="12"
+                              Margin="0,4,0,0"
+                              FontFamily="Candara"/>
+
+                    <MenuItem Command="{Binding ChangeDisplayMemberPathCommand}" 
+                              Icon="{Binding ShowCodeOrNameIcon}"
+                              Header="{Binding ShowCodeOrNameText, Mode=OneWay, UpdateSourceTrigger=PropertyChanged}"
+                              Height="26"
+                              FontSize="12"
+                              Margin="0,4,0,0"
+                              FontFamily="Candara"/>
+                </ContextMenu>
+            </TextBox.ContextMenu>
+            <i:Interaction.Triggers>
+                <i:EventTrigger EventName="LostFocus">
+                    <i:InvokeCommandAction Command="{Binding LostFocusCommand}"/>
+                </i:EventTrigger>
+            </i:Interaction.Triggers>
+        </TextBox>
+
+    </Grid>
+</baseUserControls:BaseUserControl>
