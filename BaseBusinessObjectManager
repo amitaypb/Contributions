@@ -1,0 +1,1269 @@
+using BusinessObjects.BusinessObjects.Admin;
+using BusinessObjects.BusinessObjects.Base;
+using BusinessObjects.Util;
+using Base.Constants;
+using Base.DTOs.Base;
+using Base.DTOs.General;
+using BusinessObjects.DTOs.Parameters;
+using BusinessObjects.Interfaces;
+using Framework.BusinessLogic.General;
+using Framework.Repositories.Base;
+using Framework.BusinessLogic.Util;
+using Framework.Utilities.Criptography.Encryptors;
+using Framework.Utilities.Exceptions;
+using Framework.Utilities.Extensions;
+using Framework.Utilities.Util;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Threading.Tasks;
+using BusinessObjects.DTOs.Base;
+using System.Data.Common;
+using System.Linq.Expressions;
+using Base.Enums.General;
+using Base.Attributes;
+using BusinessObjects.BusinessObjects.Languages;
+using BusinessObjects.DTOs.General;
+using BusinessObjects.Enums.General;
+using Framework.Repositories.General;
+
+namespace Framework.BusinessLogic.Base
+{
+    /// <summary>
+    /// Base class of Business Objects Managers.
+    /// Managers contains Business Logic for Business Objects.
+    /// </summary>
+    /// <typeparam name="T">Type of the Business Object</typeparam>
+    public class BaseBusinessObjectManager<T> : BaseManager where T : BaseBusinessObject, new()
+    {
+        #region Properties
+
+		private BaseBusinessObjectRepository<T> _repository;
+
+        public override BaseRepository Repository
+		{
+			get { return _repository ?? (_repository = new BaseBusinessObjectRepository<T>(ObjectName)); }
+		}
+
+		#endregion Properties
+
+		#region Methods
+
+		public async Task<DatabaseConnection> GetDatabaseConnectionFromXML()
+		{
+			return await Repository.GetDatabaseConnectionFromXML();
+		}
+
+		public void SaveInitialDatabaseConnectionToXML(DatabaseConnection databaseConnection)
+		{
+			Repository.SaveInitialDatabaseConnectionToXML(databaseConnection);
+		}
+
+		/// <summary>
+		/// Tests the Database Connection.
+		/// </summary>
+		/// <returns></returns>
+		public async Task<string> TestConnection(DatabaseConnection databaseConnection = null)
+		{
+			return await Repository.TestConnection(databaseConnection);
+		}
+
+		public async Task<string> ResetDatabaseConnection()
+		{
+			return await Repository.ResetDatabaseConnection();
+		}
+
+		public async Task InitializeConnection()
+		{
+			await Repository.InitializeConnection();
+		}
+
+#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
+        public virtual async Task<T> GetNewBusinessObject()
+#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
+        {
+            var businessObject = new T
+            {
+                Company = SessionVariables.Instance.Company
+            };
+
+            return businessObject;
+        }
+
+        /// <summary>
+		/// Inserts the Business Object in the Database.
+		/// </summary>
+		/// <param name="businessObject">Business Object to Insert.</param>
+		public virtual async Task<BaseResponse> Insert(T businessObject)
+        {
+            var responseMessage = await ValidateBusinessObject(businessObject, new ValidationParameter());
+
+            if (!responseMessage.Success)
+            {
+                return responseMessage;
+            }
+			
+            var responseMessage = await Repository.Insert(businessObject);
+
+			businessObject.HaveChanges = false;
+			return responseMessage;
+        }
+
+        /// <summary>
+        /// Updates the Business Object in the Database.
+        /// </summary>
+        /// <param name="businessObject">Business Object to Update.</param>
+        public virtual async Task<BaseResponse> Update(T businessObject)
+        {
+            var responseMessage = await ValidateBusinessObject(businessObject, new ValidationParameter());
+
+            if (!responseMessage.Success)
+            {
+                return responseMessage;
+            }
+			
+            var responseMessage = await Repository.Update(businessObject);
+
+			businessObject.HaveChanges = false;
+            return responseMessage;
+        }
+
+        /// <summary>
+        /// Searches a List of Business Objects.
+        /// </summary>
+        /// <param name="searchParameter">Search Parameters.</param>
+        /// <returns>List of Business Objects.</returns>
+        public virtual async Task<List<T>> Search(SearchParameter searchParameter = null)
+        {
+            var businessObjectsTuple = await SearchWithCount(searchParameter);
+
+            return businessObjectsTuple == null ? new List<T>() : businessObjectsTuple.Item1;
+        }
+
+		public virtual Tuple<List<T>, long, string> SearchListWithPaging(List<T> businessObjectsList, SearchParameter searchParameter)
+		{
+			var businessObjects = new List<T>();
+			var pagedBusinessObjects = new List<T>();
+			var text = searchParameter.SearchText;
+
+			for (var i = 0; i < businessObjectsList.Count; i++)
+			{
+				var item = businessObjectsList[i];
+
+				item.IsSelected = false;
+
+				if (ObjectMatchesSearchCondition(item, text))
+				{
+					businessObjects.Add(item);
+				}
+			}
+
+			var objectsToSkip = (searchParameter.Page - 1) * searchParameter.ObjectsToTake;
+
+			if (searchParameter.ObjectsToTake == 0)
+			{
+
+			}
+			else if (searchParameter.GetFirstPage)
+			{
+				pagedBusinessObjects = businessObjects.Take(searchParameter.ObjectsToTake).ToList();
+			}
+			else if (searchParameter.GetLastPage)
+			{
+                objectsToSkip = businessObjects.Count - (businessObjects.Count % searchParameter.ObjectsToTake);
+
+                pagedBusinessObjects = businessObjects.Skip(objectsToSkip).ToList();
+            }
+			else
+			{
+				pagedBusinessObjects = businessObjects.Skip(objectsToSkip).Take(searchParameter.ObjectsToTake).ToList();
+			}
+
+			var businessObjectsTotalCount = businessObjectsList.Count;
+			var endPage = GetEndPage(searchParameter, businessObjectsTotalCount);
+
+			return new Tuple<List<T>, long, string>(pagedBusinessObjects, businessObjectsTotalCount, endPage);
+		}
+
+		/// <summary>
+		/// Searches a List of Business Objects.
+		/// </summary>
+		/// <param name="searchParameter">Search Parameters.</param>
+		/// <returns>List of Business Objects.</returns>
+		public virtual async Task<Tuple<List<T>, long>> SearchWithCount(SearchParameter searchParameter = null)
+        {
+            return await SearchWithCount<T>(searchParameter);
+        }
+
+		/// <summary>
+        /// Searches a List of Objects of the specified Type.
+        /// </summary>
+        /// <param name="searchParameter">Search Parameters.</param>
+        /// <typeparam name="O">Type of the Objects of the return list.</typeparam>
+        /// <returns>List of Objects of the specified Type.</returns>
+        public virtual async Task<Tuple<List<O>, long>> SearchWithCount<O>(SearchParameter searchParameter = null)
+            where O : new()
+        {
+			Tuple<List<O>, long> tuple = null;
+
+			try
+			{
+				var reader = await Repository.SearchWithCount<O>(searchParameter);
+
+				tuple = await GetListFromReader<O>(reader, searchParameter);
+			}
+			catch(Exception e)
+			{
+                var message = await TranslatePostgreMessages(e);
+
+                if (!string.IsNullOrEmpty(message))
+                {
+                    throw new BusinessLogicException(message);
+                }
+
+                //If the Exception could not be translated, rethrow it.
+                //A Translated exception, means a Business Logic Exception thrown in the Stored Procedure,
+                //like a Duplicated Code.
+                throw e;
+            }
+			finally
+			{
+				await Repository.CloseConnection();
+			}
+
+			return tuple;
+        }
+
+		/// <summary>
+		/// Gets an Object from a DataRow.
+		/// </summary>
+		/// <param name="drBusinessObject">DataRow.</param>
+		/// <typeparam name="O">Type of the Object to return.</typeparam>
+		/// <returns>Object obtained from the DataRow.</returns>
+		public virtual async Task<O> GetBusinessObjectFromDataReader<O>(DbDataReader reader, int index, SearchParameter searchParameter = null)
+			where O : new()
+		{
+			if (searchParameter == null)
+			{
+				searchParameter = new SearchParameter();
+			}
+
+			var businessObject = new O();
+
+			//We assume that the Names of the properties of the Business Objects are the same than the Names
+			//of the Columns in the Database Tables, because we created the Tables that way.
+			//The only exception are inner Business Objects.
+			//Example: The User class contains a User Type, which is a Business Object.
+			//The users Table will contain a field named UserTypeId, instead of UserType.
+
+			//We set the Fields of the Business Objects, instead of the Properties, because Properties
+			//notifies the Property Changes and we don't want to do that in this method.
+			foreach (var property in Repository.BaseBusinessObjectFields)
+			{
+				var fieldInfoName = property.Name.TrimStart('_');
+
+				fieldInfoName = fieldInfoName.FirstCharUpper(false);
+
+				//If the property is a Business Object, Try to create it and set its id.
+				var innerBusinessObject = ReflectionUtil.CreateInstance<dynamic>
+					(BaseConstants.BusinessObjectsAssemblyName, property.FieldType.Name);
+
+				if (innerBusinessObject != null)
+				{
+					innerBusinessObject.Id = Repository.GetObjectFromDataReader<long>(reader, fieldInfoName + BaseConstants.Id);
+
+					if (!searchParameter.GetByIdEveryBusinessObject)
+					{
+						property.SetValue(businessObject, innerBusinessObject);
+					}
+					else
+					{
+						var loadByIdParameter = new LoadByIdParameter
+						{
+							Type = property.FieldType,
+							Id = innerBusinessObject.Id
+						};
+
+						var loadByIdResponse = await ManagerUtil.LoadBusinessObjectById(loadByIdParameter);
+
+						if (loadByIdResponse.Success)
+						{
+							property.SetValue(businessObject, loadByIdResponse.Object);
+						}
+						else
+						{
+							property.SetValue(businessObject, innerBusinessObject);
+						}
+					}
+				}
+			}
+
+			foreach (var property in Repository.BaseFields)
+			{
+				var fieldInfoName = property.Name.TrimStart('_');
+
+				fieldInfoName = fieldInfoName.FirstCharUpper(false);
+
+				if (!Repository.ReaderHaveColumn(reader, fieldInfoName))
+				{
+                    if (fieldInfoName == BaseConstants.Index)
+                    {
+                        property.SetValue(businessObject, index);
+                    }
+
+					continue;
+				}                
+
+                var propertyValue = reader[fieldInfoName];
+
+				if (propertyValue == DBNull.Value)
+				{
+					property.SetValue(businessObject, null);
+				}
+				else
+				{
+					property.SetValue(businessObject, propertyValue);
+				}
+			}
+
+			//businessObject.HaveChanges = false;
+			if (searchParameter.HaveChangesProperty != null)
+			{
+				searchParameter.HaveChangesProperty.SetValue(businessObject, false);
+			}
+
+			return businessObject;
+		}
+
+		public async Task<List<T>> GetListFromDataTable(DataTable businessObjectsTable, bool returnDeleted = false)
+        {
+            var businessObjects = new List<T>();
+
+            foreach (DataRow drBusinessObject in businessObjectsTable.Rows)
+            {
+                if (!returnDeleted)
+                {
+                    //If the Object is Deleted, and we don't want to return the deleted objects, we skip it.
+                    var deletedBy = Repository.GetObjectFromDataRow<DateTime?>(drBusinessObject, BaseConstants.DeletedDate);
+
+                    if (deletedBy != null)
+                    {
+                        continue;
+                    }
+                }
+
+                var businessObject = await GetBusinessObjectFromDataRow(drBusinessObject);
+
+                businessObjects.Add(businessObject);
+            }
+
+            return businessObjects;
+        }
+
+        /// <summary>
+        /// Gets a Business Object from a DataRow.
+        /// </summary>
+        /// <param name="drBusinessObject">DataRow.</param>
+        /// <returns>Business Object obtained from the DataRow.</returns>
+        public virtual async Task<T> GetBusinessObjectFromDataRow(DataRow drBusinessObject, SearchParameter searchParameter = null)
+        {
+            return await GetBusinessObjectFromDataRow<T>(drBusinessObject, searchParameter);
+        }
+
+        /// <summary>
+        /// Gets an Object from a DataRow.
+        /// </summary>
+        /// <param name="drBusinessObject">DataRow.</param>
+        /// <typeparam name="O">Type of the Object to return.</typeparam>
+        /// <returns>Object obtained from the DataRow.</returns>
+        public virtual async Task<O> GetBusinessObjectFromDataRow<O>(DataRow drBusinessObject, SearchParameter searchParameter = null)
+            where O : new()
+        {
+            if (searchParameter == null)
+            {
+                searchParameter = new SearchParameter();
+            }
+
+            var businessObject = new O();
+
+            //We assume that the Names of the properties of the Business Objects are the same than the Names
+            //of the Columns in the Database Tables, because we created the Tables that way.
+            //The only exception are for the inner Business Objects.
+            //Example: The User class contains a User Type, which is a Business Object.
+            //The users Table will contain a field named UserTypeId, instead of UserType.
+
+            //We set the Fields of the Business Objects, instead of the Properties, because Properties
+            //notifies the Property Changes and we don't want to do that in this method.
+            foreach (var property in Repository.BaseBusinessObjectFields)
+            {
+                var fieldInfoName = property.Name.TrimStart('_');
+
+                fieldInfoName = fieldInfoName.FirstCharUpper(false);
+
+                if (searchParameter.ExcludeAuditUsers && (fieldInfoName == BaseConstants.CreatedBy || fieldInfoName == BaseConstants.DeletedBy
+                    || fieldInfoName == BaseConstants.UpdatedBy))
+                {
+                    continue;
+                }
+
+                //If the property is a Business Object, Try to create it and set its id.
+                var innerBusinessObject = ReflectionUtil.CreateInstance<dynamic>
+					(BaseConstants.BusinessObjectsAssemblyName, property.FieldType.Name);
+
+                if (innerBusinessObject != null)
+                {
+                    innerBusinessObject.Id = Repository.GetObjectFromDataRow<long>(drBusinessObject, fieldInfoName + "Id");
+
+                    if (!searchParameter.GetByIdEveryBusinessObject)
+                    {
+                        property.SetValue(businessObject, innerBusinessObject);
+                    }
+                    else
+                    {
+                        var loadByIdParameter = new LoadByIdParameter
+                        {
+                            Type = property.FieldType,
+                            Id = innerBusinessObject.Id
+                        };
+
+                        var loadByIdResponse = await ManagerUtil.LoadBusinessObjectById(loadByIdParameter);
+
+                        if (loadByIdResponse.Success)
+                        {
+                            property.SetValue(businessObject, loadByIdResponse.Object);
+                        }
+                        else
+                        {
+                            property.SetValue(businessObject, innerBusinessObject);
+                        }
+                    }
+                }
+            }
+
+            foreach (var property in Repository.BaseFields)
+            {
+                var fieldInfoName = property.Name.TrimStart('_');
+
+                fieldInfoName = fieldInfoName.FirstCharUpper(false);
+
+                var propertyValue = drBusinessObject.Table.Columns.Contains(fieldInfoName)
+                    ? drBusinessObject[fieldInfoName]
+                    : null;
+
+                if (propertyValue == DBNull.Value)
+                {
+                    property.SetValue(businessObject, null);
+                }
+                else
+                {
+                    property.SetValue(businessObject, propertyValue);
+                }
+            }
+
+            //businessObject.HaveChanges = false;
+            if (searchParameter.HaveChangesProperty != null)
+            {
+                searchParameter.HaveChangesProperty.SetValue(businessObject, false);
+            }
+
+            return businessObject;
+        }
+
+		/// <summary>
+		/// Loads a Business Object by Id.
+		/// Only Loads First Level Properties.
+		/// </summary>
+		/// <param name="id">Id of the Business Object.</param>
+		/// <returns>Business Object with the specified Id.</returns>
+		public virtual async Task<ResponseMessage<T>> LoadById(long id)
+		{
+			var loadByIdParameter = new LoadByIdParameter
+			{
+				Id = id
+			};
+
+			return await LoadByIdWithParameters(loadByIdParameter);
+		}
+
+		/// <summary>
+		/// Loads a Business Object by Id.
+		/// Only Loads First Level Properties.
+		/// </summary>
+		/// <param name="loadByIdParameter">Parameters or Options to Load a Business Object by Id.</param>
+		/// <returns>Business Object with the specified Id.</returns>
+		public virtual async Task<ResponseMessage<T>> LoadByIdWithParameters(LoadByIdParameter loadByIdParameter)
+        {
+            var response = new ResponseMessage<T>();
+            var message = string.Empty;
+            var methodName = "LoadById";
+
+            if (loadByIdParameter.Id <= 0)
+            {
+                message = await GetText("CantLoadObjectWithIdZero");
+                response.Message = string.Format(message, methodName);
+                response.ResponseType = ResponseTypeEnum.Information;
+                return response;
+            }
+
+            var searchParameter = new SearchParameter
+            {
+                SearchText = loadByIdParameter.Id.ToString(),
+                CompanyId = loadByIdParameter.CompanyId,
+				ActiveStatus = loadByIdParameter.ActiveStatus,
+                DeleteStatus = loadByIdParameter.DeleteStatus
+            };
+
+            var businessObjects = await Search(searchParameter);
+
+            var businessObject = businessObjects.FirstOrDefault(x => x.Id == loadByIdParameter.Id);
+
+            if (businessObject == null)
+            {
+                message = await GetText("CantLoadObjectWithId");
+                response.Message = string.Format(message, methodName, loadByIdParameter.Id, loadByIdParameter.ActiveStatus, 
+                    loadByIdParameter.DeleteStatus, loadByIdParameter.CompanyId);
+
+                response.ResponseType = ResponseTypeEnum.Information;
+                return response;
+            }
+
+            response.ResponseType = string.IsNullOrEmpty(response.Message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            response.Object = businessObject;
+            return response;
+        }
+
+        /// <summary>
+        /// Gets a Business Object by Id.
+        /// This Loads First Level Properties and Inner Business Objects.
+        /// IMPORTANT: Retreives only Active and NOT Deleted Business Objects.
+        /// </summary>
+        /// <param name="id">Id of the Business Object.</param>
+        /// <returns>Business Object with the specified Id.</returns>
+        public virtual async Task<ResponseMessage<T>> GetById(long id)
+        {
+            return await GetByIdWithParameters(new LoadByIdParameter { Id = id });
+        }
+
+        /// <summary>
+        /// Gets a Business Object by Id.
+        /// This Loads First Level Properties and Inner Business Objects.
+        /// </summary>
+        /// <param name="loadByIdParameter">Load By Id Options.</param>
+        /// <returns>Business Object with the specified Id.</returns>
+        public virtual async Task<ResponseMessage<T>> GetByIdWithParameters(LoadByIdParameter loadByIdParameter)
+        {
+            var response = new ResponseMessage<T>();
+            var message = string.Empty;
+            var methodName = "GetById";
+
+            if (loadByIdParameter.Id <= 0)
+            {
+                message = await GetText("CantLoadObjectWithIdZero");
+                response.Message = string.Format(message, methodName);
+                response.ResponseType = ResponseTypeEnum.Information;
+                return response;
+            }
+
+            var loadByIdResponse = await LoadByIdWithParameters(loadByIdParameter);
+
+            if(!loadByIdResponse.Success)
+            {
+                return loadByIdResponse;
+            }
+
+            var businessObject = loadByIdResponse.Object;
+
+            if (businessObject == null)
+            {
+                message = await GetText("CantLoadObjectWithId");
+                response.Message = string.Format(message, methodName, loadByIdParameter.Id);
+                response.ResponseType = ResponseTypeEnum.Information;
+                return response;
+            }
+
+            //Load every Inner Business Object.
+            foreach (var property in Repository.BusinessObjectFields)
+            {
+                var fieldInfoName = property.Name.TrimStart('_');
+
+                if (ReflectionUtil.PropertyIsList(property))
+                {
+                    var actualProperty = Repository.BusinessObjectProperties.FirstOrDefault(x => x.Name.ToLower() == fieldInfoName.ToLower());
+
+                    await LoadList(businessObject, actualProperty, loadByIdParameter.CompanyId, loadByIdParameter.FullLoad);
+                    continue;
+                }
+
+                //Load Lists only.
+                if(loadByIdParameter.LoadListsOnly)
+                {
+                    continue;
+                }
+
+                fieldInfoName = fieldInfoName.FirstCharUpper(false);
+
+                //Exclude the Properties that are not Business Objects.
+                if (!property.FieldType.IsSubclassOf(typeof(BaseBusinessObject)))
+                {
+                    continue;
+                }
+
+                //Only Load CreatedBy, UpdatedBy and DeleteBy properties on Full Load.
+                if ((fieldInfoName == BaseConstants.CreatedBy || fieldInfoName == BaseConstants.UpdatedBy
+                    || fieldInfoName == BaseConstants.DeletedBy) && !loadByIdParameter.FullLoad)
+                {
+                    continue;
+                }
+
+                var innerResponse = await ManagerUtil.LoadInnerBusinessObjectById(businessObject, property, loadByIdParameter);
+
+                if (!innerResponse.Success)
+                {
+                    throw new BusinessLogicException(innerResponse.Message);
+                }
+
+                var innerBusinessObject = innerResponse.Object;
+                property.SetValue(businessObject, innerBusinessObject);
+            }
+
+            businessObject.HaveChanges = false;
+
+            SessionVariables.Instance.ThrowQueryFinishedEvent(this, null);
+            response.ResponseType = string.IsNullOrEmpty(response.Message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Error;
+            response.Object = businessObject;
+
+            return response;
+        }
+
+        /// <summary>
+		/// Loads a List of Business Objects that is a Property of the specified
+		/// Business Object.
+		/// </summary>
+		/// <param name="businessObject">Business Object with a List of Business Objects to be loaded.</param>
+		/// <param name="propertyList">Property of List of Business Objects.</param>
+		/// <param name="fullLoad">Indicates if the Business Object will be Fully Loaded.
+		/// This means, that if the Business Object have a List, Every Object of the List
+		/// will be fully Loaded. This is an expensive operation.</param>
+		/// <returns>The Business Object will have its List of Business Objects loaded.</returns>
+		public virtual async Task LoadList(T businessObject, PropertyInfo propertyList, long? companyId = 0, bool fullLoad = false)
+        {
+            var managerType = typeof(BaseBusinessObjectManager<>);
+
+            var innerBusinessObjectType = propertyList.PropertyType.GenericTypeArguments[0];
+
+            //This Method only loads list of Base Business Objects.
+            if (!innerBusinessObjectType.IsSubclassOf(typeof(BaseBusinessObject)))
+            {
+                return;
+            }
+
+            //Get the Parameter of the List.
+            Type[] typeArgs = { innerBusinessObjectType };
+
+            //Create the Repository of the Type of the List.
+            var makeme = managerType.MakeGenericType(typeArgs);
+            object manager = Activator.CreateInstance(makeme, new object[] { ObjectName });
+
+            //Get the Search Method.
+            var searchMethod = makeme.GetMethod(BaseConstants.Search);
+
+            var searchParameter = new SearchParameter
+            {
+                SearchText = businessObject.Id.ToString(),
+                CompanyId = companyId == null ? (long?)null : businessObject.CompanyId,
+                ExcludeAuditUsers = true,
+                ExcludeInnerBusinessObjectsWithId = true
+            };
+
+            //Invoke the Search Method using the Repository of the Inner Business Object Property Type.
+            var allBusinessObjectsList = await (dynamic)searchMethod.Invoke(manager
+               , new object[] { searchParameter });
+
+            //Create the Generic List of Business Objects.
+            var businessObjectsList = ReflectionUtil.CreateBusinessObjectsList(propertyList);
+
+            var addMethod = businessObjectsList.GetType().GetMethod("Add");
+
+            //Get only the Business Object with the same Id in the Property than the
+            //specified Business Object.
+            //For Instance, if BusinessObject is UserType, the List is of UserTypePermissions.
+            //When you Invoke the UserTypePermissionRepository.Search(UserTypeId)
+            //you need to make sure that every returned object have 
+            //UserTypePermission.UserTypeId == UserType.Id.
+            foreach (var childBusinessObject in allBusinessObjectsList)
+            {
+                var property = ReflectionUtil.GetPropertyByType(childBusinessObject, businessObject.GetType());
+
+                if (property != null)
+                {
+                    var innerBusinessObject = property.GetValue(childBusinessObject);
+
+                    var idProperty = ReflectionUtil.GetPropertyByName(childBusinessObject, BaseConstants.Id);
+
+                    var innerBusinessObjectId = idProperty.GetValue(innerBusinessObject);
+
+                    if (innerBusinessObjectId == businessObject.Id)
+                    {
+                        if (fullLoad)
+                        {
+                            //Get By Id Every Business Object in the List.
+                            if ((long)innerBusinessObjectId > 0)
+                            {
+                                MethodInfo getByIdMethod = null;
+                                object innerRepository = null;
+
+                                if (RepositoriesGetById == null)
+                                {
+                                    RepositoriesGetById = new Dictionary<string, Tuple<object, MethodInfo>>();
+                                }
+
+                                if (RepositoriesGetById.ContainsKey(childBusinessObject.GetType().Name))
+                                {
+                                    var tuple = RepositoriesGetById[childBusinessObject.GetType().Name];
+                                    innerRepository = tuple.Item1;
+                                    getByIdMethod = tuple.Item2;
+                                }
+                                else
+                                {
+                                    Type[] innerTypeArgs = { childBusinessObject.GetType() };
+                                    var innerMakeme = managerType.MakeGenericType(innerTypeArgs);
+                                    innerRepository = Activator.CreateInstance(innerMakeme, new object[] { ObjectName });
+
+                                    //Get the GetById Method.
+                                    getByIdMethod = innerMakeme.GetMethod("GetById");
+
+                                    RepositoriesGetById.Add(childBusinessObject.GetType().Name,
+                                        new Tuple<object, MethodInfo>(innerRepository, getByIdMethod));
+                                }
+
+                                innerBusinessObjectId = idProperty.GetValue(childBusinessObject);
+
+                                //Invoke the GetById Method using the Repository of the Inner Business Object Property Type.
+                                innerBusinessObject = await (dynamic)getByIdMethod.Invoke(innerRepository
+                                    , new object[] { innerBusinessObjectId });
+                            }
+
+                            innerBusinessObject.HaveChanges = false;
+
+                            addMethod.Invoke(businessObjectsList, new[] { innerBusinessObject });
+                        }
+                        else
+                        {
+                            childBusinessObject.HaveChanges = false;
+
+                            addMethod.Invoke(businessObjectsList, new[] { childBusinessObject });
+                        }
+                    }
+                }
+            }
+
+            //Assign the List to the Business Object.
+            propertyList.SetValue(businessObject, businessObjectsList);
+        }
+
+        /// <summary>
+		/// Loads a List of Business Objects that is a Property of the specified
+		/// Business Object.
+		/// </summary>
+		/// <param name="businessObject">Business Object with a List of Business Objects to be loaded.</param>
+		/// <param name="propertyList">List of Business Objects.</param>
+		/// <param name="fullLoad">Indicates if the Business Object will be Fully Loaded.
+		/// This means, that if the Business Object have a List, Every Object of the List
+		/// will be fully Loaded. This is an expensive operation.</param>
+		/// <returns>The Business Object will have its List of Business Objects loaded.</returns>
+		public virtual async Task LoadList(T businessObject, IEnumerable<IBaseBusinessObject> propertyList,
+            bool fullLoad = false)
+        {
+            var property = Repository.AllBusinessObjectProperties.FirstOrDefault(x => x.PropertyType == propertyList.GetType());
+
+            if (property != null)
+            {
+                await LoadList(businessObject, property, 0, fullLoad);
+            }
+        }
+
+        /// <summary>
+        /// Inserts or Updates the Business Object in the Database.
+        /// </summary>
+        /// <param name="businessObject">Business Object to Insert or Update.</param>
+        public virtual async Task<BaseResponse> InsertOrUpdate(T businessObject)
+        {
+            BaseResponse responseMessage;
+
+			if (businessObject.Id > 0)
+			{
+				responseMessage = await Update(businessObject);
+			}
+			else
+			{
+				responseMessage = await Insert(businessObject);
+			}
+
+			return responseMessage;
+		}
+
+		/// <summary>
+		/// Inserts or Updates a List of Business Objects.
+		/// </summary>
+		/// <param name="businessObjects">List of Business Objects.</param>
+		/// <returns>ResponseMessage.</returns>
+		public virtual async Task<BaseResponse> InsertOrUpdateList(IEnumerable<T> businessObjects)
+		{
+			foreach(var businessObject in businessObjects)
+			{
+				var response = await InsertOrUpdate(businessObject);
+
+				if(!response.Success)
+				{
+					return response;
+				}
+			}
+
+			return new BaseResponse
+            {
+				ResponseType = ResponseTypeEnum.Success
+			};
+		}
+
+		/// <summary>
+		/// Deletes the Business Object from the Database.
+		/// </summary>
+		/// <param name="businessObject">Business Object to be Deleted.</param>
+		public virtual async Task Delete(T businessObject)
+		{
+			//Thr Try Catch is needed, because if the Delete Stored Procedure fails or throws an exception,
+			//and we don't catch it here, then the ERP is closed.
+			try
+			{
+				await Repository.Delete(businessObject);
+			}
+			catch(Exception e)
+			{
+				throw new BusinessLogicException(e.Message);
+			}
+		}
+
+        /// <summary>
+        /// Deletes a List of Business Objects.
+        /// </summary>
+        /// <param name="businessObjects">List of Business Objects.</param>
+        /// <returns>Response Message.</returns>
+        public virtual async Task Delete(IEnumerable<T> businessObjects)
+        {
+            await Repository.Delete(businessObjects);
+        }
+
+        /// <summary>
+        /// Returns the Mandatory Properties of a Business Object.
+        /// A Mandatory Property is a Property that can not be Null for a Business Object.
+        /// </summary>
+        /// <returns>List of Mandatory Properties of a Business Object.</returns>
+        public List<PropertyInfo> GetBusinessObjectMandatoryProperties()
+        {
+            var properties = ReflectionUtil.GetPropertiesInfo<T>();
+
+            //Get all of the Properties that are Not excluded and Not Optional in the Mapping.
+            var mandatoryProperties = new List<PropertyInfo>();
+
+            foreach (var property in properties.Where(x => x.SetMethod != null))
+            {
+                //Skip Nullable Properties and the IsNotifying Property, because this Property comes from the PropertyChangedBase Object
+                //from the Caliburn.Micro dll.
+                if(Nullable.GetUnderlyingType(property.PropertyType) != null || property.Name == BaseConstants.IsNotifying)
+                {
+                    continue;
+                }
+
+                var propertyIsList = ReflectionUtil.PropertyIsList(property);
+
+                object[] attributes = property.GetCustomAttributes(true);
+                var excludeProperty = false;
+                var haveIncludeListOnInsertAttribute = false;
+
+                foreach (var attribute in attributes)
+                {
+                    var attributeType = attribute.GetType();
+
+                    if (attributeType == typeof(OptionalMappingAttribute) || attributeType == typeof(ExcludeMappingAttribute))
+                    {
+                        excludeProperty = true;
+                        break;
+                    }
+
+                    if(attributeType == typeof(IncludeListOnInsertAttribute))
+                    {
+                        haveIncludeListOnInsertAttribute = true;
+                    }
+                }
+
+                //Exclude Lists that does not have the IncludeListOnInsertAttribute, because this means, that this Lists
+                //are not required to create the Business Object.
+                if (propertyIsList &&  !haveIncludeListOnInsertAttribute)
+                {
+                    excludeProperty = true;
+                }
+
+                if (!excludeProperty)
+                {
+                    mandatoryProperties.Add(property);
+                }
+            }
+
+            return mandatoryProperties;
+        }
+
+        /// <summary>
+        /// Gets a Business Object with Test Values in its Properties.
+        /// This is for Test Purposes.
+        /// </summary>
+        /// <param name="excludedProperties">List of the Names of the Properties to be excluded in the Property assignments.</param>
+        /// <returns>Business Object with Test Values in its Properties</returns>
+        public async Task<ResponseMessage<T>> GetTestBusinessObject(List<Type> excludedProperties = null)
+        {
+            var response = new ResponseMessage<T>();
+            var testObject = await GetNewBusinessObject();
+
+            //Get all of the Properties that are Not excluded and Not Optional in the Mapping.
+            var mandatoryProperties = GetBusinessObjectMandatoryProperties();
+
+            //Set Test Values for each Unset Property of the Object.
+            foreach(var property in mandatoryProperties)
+            {
+                if(property.Name == BaseConstants.CreatedBy 
+                || property.Name == BaseConstants.CreatedDate
+                || property.Name == BaseConstants.ObjectVersion
+                || (excludedProperties != null && excludedProperties.Contains(property.PropertyType)))
+                {
+                    //Ignore the Created By Property, because this is set in the Stored Procedure.
+                    continue;
+                }
+
+                var propertyValue = property.GetValue(testObject);
+
+                if(property.PropertyType == typeof(string))
+                {
+                    if (propertyValue == null || string.IsNullOrEmpty(propertyValue.ToString()))
+                    {
+                        var testString = "Test " + typeof(T).Name + " " + DateTime.Now.ToLongDateTimeString();
+                        property.SetValue(testObject, testString);
+                    }
+                    //Ignore a String property with a value.
+                }
+                else if ((property.PropertyType == typeof(DateTime) || property.PropertyType == typeof(DateTime?)) && propertyValue == null)
+                {
+                    var testDate = DateTime.Now;
+                    property.SetValue(testObject, testDate);
+                }
+                //If the Property is the Company, assign the Company in the Session.
+                else if(property.PropertyType == typeof(Company))
+                {
+                    property.SetValue(testObject, SessionVariables.Instance.Company);
+                }
+                //If the Mandatory Property is a Business Object or a List of Business Objects, try to get the First Business Object in the Database.
+                else if(ReflectionUtil.TypeHaveBaseType(property.PropertyType, typeof(BaseBusinessObject))
+                     || ReflectionUtil.PropertyIsListOf(property, typeof(BaseBusinessObject)))
+                {
+                    var responseBusinessObject = await SetBusinessObjectPropertyWithFirstBusinessObjectOfType(testObject, property);
+
+                    if(!responseBusinessObject.Success)
+                    {
+                        return responseBusinessObject;
+                    }
+                }
+            }
+
+            response.Object = testObject;
+            response.ResponseType = string.IsNullOrEmpty(response.Message) ? ResponseTypeEnum.Success : ResponseTypeEnum.Information;
+            return response;
+        }
+
+        private async Task<ResponseMessage<T>> SetBusinessObjectPropertyWithFirstBusinessObjectOfType(T testObject, PropertyInfo property)
+        {
+            var response = new ResponseMessage<T>();
+
+            //For Lists, always create a New Element List, because the Tables can have constraints to only have child element on the list associated
+            //to one Parent. For instance, a Sale Order Line can be associated with one Sale Order only.
+            if (ReflectionUtil.PropertyIsList(property.PropertyType))
+            {
+                var currentType = ReflectionUtil.GetListType(property.PropertyType);
+
+                var managerUtil = new ManagerUtil(ObjectName);
+                var managerResponse = await managerUtil.GetManagerByType(currentType);
+
+                if(!managerResponse.Success)
+                {
+                    return new ResponseMessage<T>(managerResponse);
+                }
+
+                MethodInfo method = managerResponse.Object.GetType().GetMethod("GetTestBusinessObject");
+                //Get a New AdjustmentLine, excluding the Adjustment Property.
+                //Because, otherwise an infinite loop will create. You want to create an Adjustment, then you create an AdjustmentLine,
+                //and when creating an AdjustmentLine you need an adjustment.
+                var currentResponse = await (dynamic)method.Invoke(managerResponse.Object, new object[] { new List<Type> { typeof(T) } });
+
+                if(!currentResponse.Success)
+                {
+                    return new ResponseMessage<T>(currentResponse);
+                }
+
+                var listValue = property.GetValue(testObject);
+
+                //Add the Business Object to the List.
+                ReflectionUtil.AddObjectToList(listValue, currentResponse.Object);
+
+                property.SetValue(testObject, listValue);
+
+                response.ResponseType = ResponseTypeEnum.Success;
+                return response;
+            }            
+
+            var responseBusinessObject = await GetFirstBusinessObject(property.PropertyType);
+
+            if (responseBusinessObject.Object != null)
+            {
+                property.SetValue(testObject, responseBusinessObject.Object);
+            }
+            else
+            {
+                if (!responseBusinessObject.Success)
+                {
+                    response.Message = responseBusinessObject.Message;
+                    response.ResponseType = responseBusinessObject.ResponseType;
+                    return response;
+                }
+
+                response.Message = await GetText("ThereAreNoBusinessObjectProperty");
+                response.Message = string.Format(response.Message, property.PropertyType, GetTableName(property.PropertyType.Name),
+                    property.Name, typeof(T).FullName);
+                response.ResponseType = ResponseTypeEnum.Information;
+                return response;
+            }
+
+            response.ResponseType = ResponseTypeEnum.Success;
+            return response;
+        }
+
+        /// <summary>
+        /// Gets the First Business Object with the specified Type.
+        /// </summary>
+        /// <param name="type">Type of the Business Object.</param>
+        /// <returns>First Business Object with the specified Type.</returns>
+        public async Task<ResponseMessage<object>> GetFirstBusinessObject(Type type)
+        {
+            var currentType = type;
+
+            if(ReflectionUtil.PropertyIsList(type))
+            {
+                currentType = ReflectionUtil.GetListType(type);
+            }
+
+            var response = await ManagerUtil.GetManagerByType(currentType);
+
+            if (!response.Success)
+            {
+                return response;
+            }
+
+            var manager = response.Object;
+            var searchParameter = new SearchParameter
+            {
+                ObjectsToTake = 1
+            };
+
+            //Search one Business Object.
+            response = await ManagerUtil.Search(type, searchParameter, manager);
+
+            if (typeof(IEnumerable<object>).IsAssignableFrom(response.Object.GetType()))
+            {
+                IEnumerable<object> objects = (IEnumerable<object>)response.Object;
+                var firstObject = objects.FirstOrDefault();
+
+                if (firstObject != null)
+                {
+                    response.Object = firstObject;
+                    return response;
+                }
+                else
+                {
+                    response.Message = await GetText("ThereAreNoBusinessObjects");
+                    response.Message = string.Format(response.Message, type, GetTableName(type.Name));
+                    response.ResponseType = ResponseTypeEnum.Information;
+                    return response;
+                }
+            }
+
+            response.Message = await GetText("FirstBusinessObjectResponseIsNotList");
+            response.Message = string.Format(response.Message, type);
+            response.ResponseType = ResponseTypeEnum.Information;
+            return response;
+        }
+
+        /// <summary>
+        /// Gets the Count of a Table in the Database.
+        /// </summary>
+        /// <returns>Count of the specified Table in the Database.</returns>
+		public async Task<long> GetTableCount()
+        {
+            var tableCount = await Repository.GetTableCount();
+
+            return tableCount;
+        }
+
+        /// <summary>
+        /// Clones the specified Business Object.
+        /// GetById the business Object. This means, that if a Business Object contains a List, and the Inner Business Object of the List,
+        /// also contains a List, this method won't GetById the Inner Inner Business Object. This is done for performance.
+        /// Only loads First Level Lists. If the Business Object have Two Level Lists, then override this Method and load the Second Level List.
+        /// For example: See PromotionManager.
+        /// </summary>
+        /// <param name="businessObject">Business Object to be cloned.</param>
+        /// <param name="properties">List of Properties of the Business Object.</param>
+        /// <param name="codeProperty">Code Property of the Business Object.
+        /// If specified, a New and unique Code for the Clone of the Business Object will be generated.</param>
+        /// <param name="currentManager">Manager used to generate the Code for the Clone of the Business Object.</param>
+        /// <returns>Clone of the Business Object.</returns>
+        public virtual async Task<ResponseMessage<T>> CloneBusinessObject(T businessObject, List<string> excludedProperties = null,
+            List<PropertyInfo> properties = null, PropertyInfo codeProperty = null, BaseBusinessObjectManager<T> currentManager = null)
+        {
+            if(businessObject == null)
+            {
+                return new ResponseMessage<T> { ResponseType = ResponseTypeEnum.Success };
+            }
+
+            if (properties == null)
+            {
+                properties = ReflectionUtil.GetPropertiesInfo<T>();
+            }
+
+            var response = new ResponseMessage<T>();
+            var loadByIdParameters = new LoadByIdParameter
+            {
+                Id = businessObject.Id
+            };
+
+            //Check the Active Status.
+            var activeProperty = properties.FirstOrDefault(x => x.Name == BaseConstants.Active && !ReflectionUtil.HaveAttribute(x, typeof(ExcludeMappingAttribute)));
+
+            if(activeProperty != null)
+            {
+                var activeObject = activeProperty.GetValue(businessObject);
+                var active = activeObject != null && (bool)activeObject;
+
+                if(!active)
+                {
+                    loadByIdParameters.ActiveStatus = ActiveStatusEnum.ActivesInactives;
+                }
+            }
+
+            //Check the Deleted Status.
+            var deletedDateProperty = properties.FirstOrDefault(x => x.Name == BaseConstants.DeletedDate
+                                && !ReflectionUtil.HaveAttribute(x, typeof(ExcludeMappingAttribute)));
+
+            if (deletedDateProperty != null)
+            {
+                var deletedDateObject = deletedDateProperty.GetValue(businessObject);
+                var deletedDate = (DateTime?)deletedDateObject;
+
+                if (deletedDate.HasValue)
+                {
+                    loadByIdParameters.DeleteStatus = DeleteStatusEnum.Deleted;
+                }
+            }
+
+            if (currentManager == null)
+            {
+                response = await GetByIdWithParameters(loadByIdParameters);
+            }
+            else
+            {
+                response = await currentManager.GetByIdWithParameters(loadByIdParameters);
+            }
+
+            if (!response.Success)
+            {
+                return response;
+            }
+
+            businessObject = response.Object;
+
+            var cloneObject = ReflectionUtil.CloneObject(businessObject, excludedProperties);
+
+            //Iterate all of the Lists of the ClonedObject and set the HaveChanges Property to True.
+            //Otherwise, the Business Objects in the Lists won't be sent to the Insert Stored Procedure.
+            foreach (var property in properties)
+            {
+                if (!ReflectionUtil.PropertyIsList(property) || !ReflectionUtil.PropertyIsListOf(property, typeof(BaseBusinessObject)))
+                {
+                    continue;
+                }
+
+                var propertyValue = property.GetValue(businessObject);
+                var collection = (System.Collections.IEnumerable)propertyValue;
+
+                foreach (var innerBusinessObject in collection)
+                {
+                    var baseBusinessObject = innerBusinessObject as BaseBusinessObject;
+
+                    if (baseBusinessObject == null)
+                    {
+                        continue;
+                    }
+
+                    baseBusinessObject.HaveChanges = true;
+                }
+            }
+
+            if (codeProperty != null)
+            {
+                ResponseMessage<string> newCodeResponse = null;
+
+                if (currentManager == null)
+                {
+                    newCodeResponse = await GetNewCode();
+                }
+                else
+                {
+                    newCodeResponse = await currentManager.GetNewCode();
+                }
+
+                if (!newCodeResponse.Success)
+                {
+                    response = new ResponseMessage<T>(newCodeResponse);
+                    return response;
+                }
+
+                codeProperty.SetValue(cloneObject, newCodeResponse.Object);
+            }
+
+            response.ResponseType = ResponseTypeEnum.Success;
+            response.Object = cloneObject;
+            return response;
+        }
+
+        #region Validations        
+
+#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
+        /// <summary>
+        /// Validates a Business Object.
+        /// </summary>
+        /// <param name="businessObject">Business Object to be Validated.</param>
+        /// <param name="parameters">Validation Parameters.</param>
+        /// <returns>TRUE: The Business Object can be saved into the Database.
+        /// FALSE: The Business Object have invalid Data in some fields and can not be saved into the Database.</returns>
+        public virtual async Task<BaseResponse> ValidateBusinessObject(T businessObject, ValidationParameter parameters)
+#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
+        {
+            return new BaseResponse
+            {
+                ResponseType = ResponseTypeEnum.Success
+            };
+        }
+
+        #endregion Validations
+
+        #endregion Methods
+    }
+}
