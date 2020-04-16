@@ -1,0 +1,47 @@
+{# templates/product/edit_product.html.twig #}
+{% extends 'base.html.twig' %}
+
+{% block body %}
+{#     	<label for="productIdLabel">Id:</label>#}
+{# 		<label id="productIdLabel">{{ id }}</label>#}
+		
+{# 		<br/>#}
+{#     	<label for="productNameTextBox">Name:</label>#}
+{# 		<input type="text" id="productNameTextBox" value="{{ name }}"></input>#}
+		
+{# 		<br/>#}
+{# 		<label for="productPriceTextBox">Price:</label>#}
+{# 		<input type="text" id="productPriceTextBox" value="{{ price }}"></input>#}
+		
+{# 		<br/>#}
+{# 		<label for="productDescriptionTextBox">Description:</label>#}
+{# 		<input type="text" id="productDescriptionTextBox" value="{{ description }}"></input>#}
+
+		<h1>Edit Product {{ name }}</h1>
+
+		<table>
+			<tr>
+				<td><label for="productIdLabel" style="font-weight:bold">Id:</label></td>
+				<td><label id="productIdLabel">{{ id }}</label></td>
+			</tr>
+			
+			<tr>
+				<td><label for="productNameTextBox" style="font-weight:bold">Name:</label></td>
+				<td><input type="text" id="productNameTextBox" value="{{ name }}"></input></td>
+			</tr>
+			
+			<tr>
+				<td><label for="productPriceTextBox" style="font-weight:bold">Price:</label></td>
+				<td><input type="text" id="productPriceTextBox" value="{{ price }}"></input></td>
+			</tr>
+			
+			<tr>
+				<td><label for="productDescriptionTextBox" style="font-weight:bold">Description:</label></td>
+				<td><input type="text" id="productDescriptionTextBox" value="{{ description }}"></input></td>
+			</tr>
+		</table>
+		
+		<br/>
+		<a href="{{ path('save_product', { id: p.id }) }}" class="button">Save</a>
+		<a href="{{ path('products_show') }}" class="button">Cancel</a>
+{% endblock %}
