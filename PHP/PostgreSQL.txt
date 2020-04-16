@@ -1,0 +1,11 @@
+To enable PostgreSQL in PHP applications, do the following steps:
+1- Copy and replace the php.ini File into the Installation folder of XAMP.
+Typically C:\xampp\php
+
+Contains the following changes:
+1- Ensure that the php.ini File contains the following lines:
+extension=php_pgsql.dll
+extension=php_pdo_pgsql.dll
+
+If you uncomment the extension=pgsql and extension=pdo_pgsql lines, it won't work.
+You need to add the above lines.
